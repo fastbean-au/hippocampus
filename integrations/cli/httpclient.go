@@ -296,6 +296,12 @@ func (c *httpClient) Clear(ctx context.Context, in *contract.ClearRequest, _ ...
 	return out, c.do(ctx, http.MethodPost, "/v1/clear", nil, in, out)
 }
 
+// Watch is the one RPC the gateway does not serve: it streams, and the gateway's calls are made in
+// process, which cannot. Refused here with the same code the service would give a route it lacks.
+func (c *httpClient) Watch(_ context.Context, _ *contract.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[contract.WatchEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "watch needs the gRPC transport: the HTTP gateway cannot stream")
+}
+
 // doQuery renders req's set scalar fields as query parameters (dropping any bound to the URL path
 // via exclude) and issues the request. It is the single funnel for the GET/DELETE routes, so the
 // query-encoding error is handled in one place rather than in every method.

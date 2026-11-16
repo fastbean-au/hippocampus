@@ -91,6 +91,13 @@ var scopes = map[string]scopeMode{
 	"GetForgottenMemories":    scopeFilter,
 	"DeleteForgottenMemories": scopeFilter,
 
+	// The change feed filters each event's items by the caller's scope as it is published, and a
+	// change wholly outside it is not sent at all. A forgotten record is judged by the group it had,
+	// which the store captures before the row goes - the same rule the forgotten log follows. The
+	// one event that names no record, a cycle's completion, is store-global counts and goes to every
+	// watcher, as GetConsolidationStatus does (scopeNone).
+	"Watch": scopeFilter,
+
 	// GetSummarisationCandidates serves a cache the sleep cycle populated store-wide, so it filters
 	// that cache by the caller's scope on the way out rather than at the scan - the scan is
 	// server-owned and must keep seeing every group, or the groups it skipped would never be

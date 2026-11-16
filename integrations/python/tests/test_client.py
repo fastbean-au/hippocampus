@@ -568,6 +568,8 @@ def test_every_client_method_reaches_its_rpc(client, service):
         (lambda: client.import_batch(memories=[hp.Memory("x", 50)]), "ImportBatch"),
         (lambda: client.transfer(), "Transfer"),
         (lambda: client.clear("man-1"), "Clear"),
+        # A stream: the call is made when the iterator is first advanced.
+        (lambda: list(client.watch()), "Watch"),
     ]
 
     for invoke, expected in calls:

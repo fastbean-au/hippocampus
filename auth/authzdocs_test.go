@@ -95,8 +95,8 @@ func documentedTiers(t *testing.T) map[string]Tier {
 // isRPC answers whether a name is a method of the service, so the reader can tell an RPC in a table
 // cell from any other capitalised word in inline code.
 func isRPC(name string) bool {
-	for _, method := range contract.Hippocampus_ServiceDesc.Methods {
-		if method.MethodName == name {
+	for _, rpc := range contract.RPCNames() {
+		if rpc == name {
 			return true
 		}
 	}

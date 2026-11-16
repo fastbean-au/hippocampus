@@ -21,15 +21,17 @@ import (
 func TestScopesCoverEveryRPC(t *testing.T) {
 	t.Parallel()
 
-	for _, m := range contract.Hippocampus_ServiceDesc.Methods {
-		if _, ok := scopes[m.MethodName]; !ok {
-			t.Errorf("RPC %q has no entry in scopes - declare how it honours a caller's group scope (see hippocampus/scope.go)", m.MethodName)
+	rpcs := contract.RPCNames()
+
+	for _, rpc := range rpcs {
+		if _, ok := scopes[rpc]; !ok {
+			t.Errorf("RPC %q has no entry in scopes - declare how it honours a caller's group scope (see hippocampus/scope.go)", rpc)
 		}
 	}
 
-	if len(scopes) != len(contract.Hippocampus_ServiceDesc.Methods) {
-		t.Errorf("scopes has %d entries but the service descriptor has %d methods - an entry names a non-existent RPC",
-			len(scopes), len(contract.Hippocampus_ServiceDesc.Methods))
+	if len(scopes) != len(rpcs) {
+		t.Errorf("scopes has %d entries but the service descriptor has %d RPCs - an entry names a non-existent RPC",
+			len(scopes), len(rpcs))
 	}
 }
 
@@ -40,15 +42,15 @@ func TestScopesCoverEveryRPC(t *testing.T) {
 func TestScopesAgreeWithPolicies(t *testing.T) {
 	t.Parallel()
 
-	for _, m := range contract.Hippocampus_ServiceDesc.Methods {
-		_, hasScope := scopes[m.MethodName]
+	for _, rpc := range contract.RPCNames() {
+		_, hasScope := scopes[rpc]
 
 		if !hasScope {
 			continue
 		}
 
-		if !auth.HasPolicy(m.MethodName) {
-			t.Errorf("RPC %q has a scope entry but no authorisation policy", m.MethodName)
+		if !auth.HasPolicy(rpc) {
+			t.Errorf("RPC %q has a scope entry but no authorisation policy", rpc)
 		}
 	}
 }

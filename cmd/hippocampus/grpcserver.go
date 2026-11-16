@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 	"strings"
@@ -186,6 +187,55 @@ func grpcInterceptors(deps grpcServerDeps) []grpc.UnaryServerInterceptor {
 	)
 }
 
+// streamInterceptors is the unary chain applied to the service's streaming RPCs (Watch).
+//
+// Adapted rather than written twice, so a streaming RPC can never be guarded by a different chain
+// than a unary one: before Watch every RPC was unary and this chain was unary-only, and a stream
+// added without it would have reached no authentication, no authorisation and no rate limit at all.
+// None of the interceptors reads the request message, which is what makes the adaptation exact.
+func streamInterceptors(deps grpcServerDeps) []grpc.StreamServerInterceptor {
+	unary := grpcInterceptors(deps)
+	out := make([]grpc.StreamServerInterceptor, 0, len(unary))
+
+	for _, interceptor := range unary {
+		out = append(out, streamFromUnary(interceptor))
+	}
+
+	return out
+}
+
+// streamFromUnary runs a unary interceptor around a stream, handing the stream on with whatever
+// context the interceptor derived - the verified claims, the resolved tier.
+//
+// Scoped to the Hippocampus service: reflection is a stream too, and has always been reachable
+// without a token where it is enabled at all (see reflectionSetting). Bringing it under the chain
+// would change that as a side effect of adding an RPC.
+func streamFromUnary(interceptor grpc.UnaryServerInterceptor) grpc.StreamServerInterceptor {
+	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if !strings.HasPrefix(info.FullMethod, hippocampusServicePrefix) {
+			return handler(srv, stream)
+		}
+
+		unaryInfo := &grpc.UnaryServerInfo{Server: srv, FullMethod: info.FullMethod}
+
+		_, err := interceptor(stream.Context(), nil, unaryInfo, func(ctx context.Context, _ any) (any, error) {
+			return nil, handler(srv, &contextStream{ServerStream: stream, ctx: ctx})
+		})
+
+		return err
+	}
+}
+
+// contextStream is a stream carrying the context an interceptor derived.
+type contextStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (c *contextStream) Context() context.Context {
+	return c.ctx
+}
+
 // newGRPCServer builds the gRPC server with its interceptor chain, transport limits, health
 // service and, when enabled, reflection. It does not listen.
 func newGRPCServer(cfg grpcServerConfig, deps grpcServerDeps) (*grpc.Server, *health.Server) {
@@ -193,6 +243,7 @@ func newGRPCServer(cfg grpcServerConfig, deps grpcServerDeps) (*grpc.Server, *he
 
 	serverOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(grpcInterceptors(deps)...),
+		grpc.ChainStreamInterceptor(streamInterceptors(deps)...),
 	}
 
 	// Raise the gRPC max-receive-message size above the 4 MiB default so operators can accept larger
@@ -246,8 +297,8 @@ func newGRPCServer(cfg grpcServerConfig, deps grpcServerDeps) (*grpc.Server, *he
 	// that argument was examined and dropped, because the proto and the generated swagger are both
 	// published with the source, so there is no confidentiality here to defend (openAPIHandler
 	// carries the same conclusion for the HTTP side). What is left is surface: reflection is a
-	// STREAMING RPC and every interceptor in this chain is unary, so it reaches neither the auth
-	// interceptor nor either rate limiter. It is the only thing on this port that is both
+	// streaming RPC outside the Hippocampus service, which the stream chain (streamFromUnary) passes
+	// straight through, so it reaches neither the auth interceptor nor either rate limiter. It is the only thing on this port that is both
 	// unauthenticated and unthrottled, which is enough to keep the default derived rather than a
 	// flat true. Either way the choice is logged: "reflection is not working" is otherwise
 	// indistinguishable from "the tool is wrong".

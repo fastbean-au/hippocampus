@@ -21,15 +21,17 @@ import (
 // have an authorisation policy, so a newly added RPC without a tier fails the build's tests rather
 // than silently defaulting to deny (or, worse, slipping through).
 func TestPoliciesCoverEveryRPC(t *testing.T) {
-	for _, m := range contract.Hippocampus_ServiceDesc.Methods {
-		if _, ok := policies[m.MethodName]; !ok {
-			t.Errorf("RPC %q has no authorisation policy in policies", m.MethodName)
+	rpcs := contract.RPCNames()
+
+	for _, rpc := range rpcs {
+		if _, ok := policies[rpc]; !ok {
+			t.Errorf("RPC %q has no authorisation policy in policies", rpc)
 		}
 	}
 
-	if len(policies) != len(contract.Hippocampus_ServiceDesc.Methods) {
-		t.Errorf("policies has %d entries but the service descriptor has %d methods - a policy names a non-existent RPC",
-			len(policies), len(contract.Hippocampus_ServiceDesc.Methods))
+	if len(policies) != len(rpcs) {
+		t.Errorf("policies has %d entries but the service descriptor has %d RPCs - a policy names a non-existent RPC",
+			len(policies), len(rpcs))
 	}
 }
 
@@ -120,6 +122,11 @@ func TestTierOverrides(t *testing.T) {
 // than return a name.
 func TestRouteRPC(t *testing.T) {
 	for method, p := range policies {
+		// A gRPC-only RPC has no route to resolve.
+		if p.httpPath == "" {
+			continue
+		}
+
 		rpc, ok := RouteRPC(p.httpMethod, p.httpPath)
 		if !ok {
 			t.Errorf("route %s %s does not resolve to an RPC", p.httpMethod, p.httpPath)

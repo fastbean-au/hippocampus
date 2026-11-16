@@ -1273,7 +1273,7 @@ func (d *DB) queueEventCallbacks(tx *sql.Tx, items []CallbackItem, cause DeleteC
 		return nil
 	}
 
-	return d.queueCallbacks(tx, []CallbackDelivery{{
+	return d.recordChanges(tx, []CallbackDelivery{{
 		Kind:      CallbackKindEventForgotten,
 		Cause:     cause,
 		CycleId:   cycleId,
@@ -1361,7 +1361,7 @@ func (d *DB) captureMemoryCallback(
 		return CallbackDelivery{}, false, nil
 	}
 
-	captured, err := d.captureMemoryRows(tx, memoryIds, nil, d.callbacks.IncludeBodies)
+	captured, err := d.captureMemoryRows(tx, memoryIds, nil, d.queuesMemoryCallbacks(cause) && d.callbacks.IncludeBodies)
 	if err != nil {
 
 		return CallbackDelivery{}, false, err
@@ -1381,14 +1381,33 @@ func (d *DB) captureMemoryCallback(
 	return delivery, ok, nil
 }
 
-// wantsMemoryCallbacks and wantsEventCallbacks are the two gates the delete paths consult, each
-// combining the feature switch, the cause filter and the per-kind toggle into one question.
+// wantsMemoryCallbacks and wantsEventCallbacks are the two gates the delete paths consult: whether
+// to capture the rows about to go at all. A deletion is captured when a callback will be queued for
+// it or when somebody is watching (watch.go); recordChanges then sends each where it is wanted.
 func (d *DB) wantsMemoryCallbacks(cause DeleteCause) bool {
-	return d.callbackTable && d.callbacks.wants(cause) && d.callbacks.wantsKind(CallbackKindMemoryForgotten)
+	return d.queuesMemoryCallbacks(cause) || d.watchesDeletion(cause)
 }
 
 func (d *DB) wantsEventCallbacks(cause DeleteCause) bool {
+	return d.queuesEventCallbacks(cause) || d.watchesDeletion(cause)
+}
+
+// queuesMemoryCallbacks and queuesEventCallbacks combine the feature switch, the cause filter and the
+// per-kind toggle into whether the callback queue records a deletion. Bodies are read only for this:
+// the change feed never carries one.
+func (d *DB) queuesMemoryCallbacks(cause DeleteCause) bool {
+	return d.callbackTable && d.callbacks.wants(cause) && d.callbacks.wantsKind(CallbackKindMemoryForgotten)
+}
+
+func (d *DB) queuesEventCallbacks(cause DeleteCause) bool {
 	return d.callbackTable && d.callbacks.wants(cause) && d.callbacks.wantsKind(CallbackKindEventForgotten)
+}
+
+// watchesDeletion reports whether a deletion with this cause reaches the change feed. Every cause
+// does: unlike the callbacks there is no narrow default, since a watcher filters by kind and a
+// client mirroring the store needs to hear about every row that left it.
+func (d *DB) watchesDeletion(cause DeleteCause) bool {
+	return cause != CauseNone && d.watching()
 }
 
 // captureEventCallback reads what a callback about these events should carry, before they are
@@ -1439,7 +1458,10 @@ func (d *DB) BeginCallbackCycle(cycleId int64) {
 	d.cycleMu.Lock()
 	defer d.cycleMu.Unlock()
 
-	if !d.callbacks.Enabled || !d.callbackTable || cycleId <= 0 {
+	// Opened for a watcher too, so the feed stamps a decay deletion with the cycle that made it.
+	collecting := d.callbacks.Enabled && d.callbackTable || d.watching()
+
+	if cycleId <= 0 || !collecting {
 		d.cycle = nil
 
 		return
@@ -1526,7 +1548,9 @@ func appendBounded(into []string, from []string, dropped int) ([]string, int) {
 // transaction - an update reports what the memory now is, not what the request asked to change. A
 // statement that matched no row captures nothing and queues nothing.
 func (d *DB) execMemoryWrite(ctx context.Context, kind CallbackKind, id string, query string, args ...any) (sql.Result, error) {
-	if !d.callbacks.Enabled || !d.callbacks.WriteEvents || !d.callbackTable {
+	queueing := d.callbacks.Enabled && d.callbacks.WriteEvents && d.callbackTable
+
+	if !queueing && !d.watching() {
 		return d.exec(ctx, query, args...)
 	}
 
@@ -1561,7 +1585,7 @@ func (d *DB) execMemoryWrite(ctx context.Context, kind CallbackKind, id string, 
 		}
 	}
 
-	captured, err := d.captureMemoryRows(tx, []string{id}, nil, d.callbacks.IncludeBodies)
+	captured, err := d.captureMemoryRows(tx, []string{id}, nil, queueing && d.callbacks.IncludeBodies)
 	if err != nil {
 		_ = tx.Rollback()
 
@@ -1583,14 +1607,14 @@ func (d *DB) execMemoryWrite(ctx context.Context, kind CallbackKind, id string, 
 			}}},
 		}
 
-		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+		if err := d.recordChanges(tx, []CallbackDelivery{delivery}); err != nil {
 			_ = tx.Rollback()
 
 			return nil, err
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := d.commit(tx); err != nil {
 		return nil, err
 	}
 

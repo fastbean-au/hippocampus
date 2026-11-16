@@ -9,6 +9,7 @@ as noun-verb subcommands and can talk to the service over **either** transport:
 
 Both transports share one client interface, so every command behaves identically whichever is
 selected — including the error codes and messages, which are surfaced as gRPC status codes on both.
+The one exception is `watch`, which streams and so needs the gRPC transport.
 `hippo` holds no state; it dials the service named by `--address` and turns each command into one
 RPC. What a token is actually allowed to do is enforced by the service's [auth
 tiers](configuration.md#authorisation), not by this tool.
@@ -204,6 +205,7 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | `forgotten clear` | delete records from the forgotten log (`--before` or `--all`)                                  |
 | `callbacks queue` | show the outbound callback queue: depth, ages, attempt counts (`--kind`, `--limit`)            |
 | `callbacks clear` | discard pending callbacks (`--before` or `--all`)                                              |
+| `watch`           | follow the store's changes as they commit, until interrupted (`--kind`, repeatable)            |
 | `purge`           | delete every event and memory (requires `--yes`)                                               |
 
 `sleep --dry-run` reports what a cycle would forget and deletes nothing — see
@@ -247,6 +249,14 @@ off, so disabling the feature leaves whatever was queued in place rather than de
 
 Both are `admin`, and both are refused to a group-scoped token — a queued delivery batches memories
 across groups, so there is nothing to scope it by.
+
+`watch` prints one line per change as the store commits it — a memory stored, updated or forgotten,
+an event forgotten, a sleep cycle finished — and runs until interrupted, ignoring
+`--timeout-seconds`. `--kind` (repeatable) narrows it to `memory-stored`, `memory-updated`,
+`memory-forgotten`, `event-forgotten` or `sleep-completed`; with `--output json` each event is one
+JSON object per line. It needs the gRPC transport (the default), since the HTTP gateway cannot stream. It is live
+only: what happened while it was not running is not replayed, and a line reporting dropped events
+means it fell behind. See [Watching for changes](api.md#watching-for-changes).
 
 `whoami` reports the token's [group scope](configuration.md#group-scoping) on its own line —
 `groups: unscoped (whole store)` when the token carries none, which is the state to check first when

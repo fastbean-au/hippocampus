@@ -80,6 +80,47 @@ lowest-significance set is exactly what the next sleep cycle forgets first, whic
 lens on consolidation (see [Demonstrations](demonstrations.md)). The full field-level request and
 response schema for every endpoint lives in the OpenAPI description at `/v1/openapi.json`.
 
+`Watch` is the one RPC with no route: it streams, and the gateway serves its calls in process,
+which cannot. It is gRPC only — see [Watching for changes](#watching-for-changes).
+
+## Watching for changes
+
+`Watch` is a server-streaming RPC that reports the store's changes as they commit, over the
+connection a client already holds — the pull counterpart of the
+[`callbacks.*` webhooks](configuration.md#outbound-callbacks), for a client that cannot run an
+HTTP receiver the service can reach (one behind NAT, a broker bridge, an agent keeping a local
+cache). It needs the `reader` tier.
+
+| Kind                           | Sent when                                        | Carries                                    |
+| ------------------------------ | ------------------------------------------------ | ------------------------------------------ |
+| `CALLBACK_KIND_MEMORY_STORED`  | a memory is created                              | the memory's id, event, group, significance, size |
+| `CALLBACK_KIND_MEMORY_UPDATED` | a memory is changed                              | the memory as it now stands                |
+| `CALLBACK_KIND_MEMORY_FORGOTTEN` | memories are deleted, by any cause             | the memories, and the `cause`              |
+| `CALLBACK_KIND_EVENT_FORGOTTEN` | events are deleted, by any cause                | the events, and the `cause`                |
+| `CALLBACK_KIND_SLEEP_COMPLETED` | a sleep cycle finishes                          | the cycle's report, as `GetConsolidationStatus` gives it |
+
+`kinds` in the request narrows the stream; empty carries all five. `MEMORIES_AT_RISK` is refused —
+it costs a preview scan per cycle and stays a callback. No event carries a memory body.
+
+- **Live and best-effort.** A watcher sees what commits from the moment it is subscribed — when the
+  response headers arrive — and nothing from before. There is no cursor to resume from: after a
+  reconnect, re-read what you need (`GetMemories`, `GetForgottenMemories`).
+- **Never slows the store.** Each watcher has a buffer; when it is full, further events are dropped
+  and counted (`hippocampus.watch.dropped`), and the next event the watcher does receive says how
+  many it missed in `dropped`. Non-zero means anything mirrored wants re-reading.
+- **Per instance.** On PostgreSQL and MySQL each instance publishes only what it committed: forgetting
+  is seen on the consolidating instance, a write on the instance that served it.
+- **Scoped.** A group-scoped token sees only items in its groups, a forgotten record judged by the
+  group it had; a change wholly outside the scope is not sent at all. A cycle's completion is
+  store-global counts and goes to every watcher.
+- **Shutdown** ends every stream with `UNAVAILABLE`, so a client reconnects to an instance that is
+  still serving.
+
+```sh
+grpcurl -H "authorization: Bearer $TOKEN" -d '{"kinds":["CALLBACK_KIND_MEMORY_FORGOTTEN"]}' \
+  localhost:50051 hippocampus.v1.Hippocampus/Watch
+```
+
 ## Metadata filters
 
 Memories and events carry a `metadata` map (see [Metadata](#metadata)), and `GetMemories`,

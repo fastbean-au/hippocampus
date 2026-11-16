@@ -636,6 +636,10 @@ func run(ctx context.Context, version versionInfo) error {
 
 	hs.Shutdown()
 
+	// Watch streams never end by themselves, so the graceful stop below would wait on every one of
+	// them until its timeout. Ended first, with Unavailable, so their clients reconnect elsewhere.
+	hipo.CloseWatchers()
+
 	// Stop gracefully so in-flight RPCs (e.g. a long Export/Transfer) finish, but bound it with a
 	// timeout: a stuck call must not hang shutdown, so fall back to a hard Stop past the deadline.
 	stopped := make(chan struct{})

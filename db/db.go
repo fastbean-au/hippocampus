@@ -138,6 +138,10 @@ type DB struct {
 	cycle   *cycleCollection
 	cycleMu sync.Mutex
 
+	// changes is the Watch RPC's change feed (see watch.go): the sink, and the deliveries staged
+	// against transactions that have not yet committed.
+	changes changeFeed
+
 	// compression is the write-side memory-body compression policy (see compress.go). The zero
 	// value stores every body verbatim. It governs writes only — reads follow each row's own
 	// is_compressed flag — and is set once at startup via SetCompression, before serving, so it
@@ -384,7 +388,12 @@ func (d *DB) beginTx(ctx context.Context) (*sql.Tx, context.CancelFunc, error) {
 		return nil, nil, err
 	}
 
-	return tx, cancel, nil
+	// Every caller defers the cancel, so it is also where a transaction that never reached d.commit
+	// - a rollback, an early return - lets go of the changes it staged for the Watch feed.
+	return tx, func() {
+		d.takeStaged(tx)
+		cancel()
+	}, nil
 }
 
 // callerTxError returns the error a transaction step should report. A cancelled context makes

@@ -13,7 +13,7 @@ service, which is what lets a client be constructed per request if that suits th
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, AsyncIterator, Callable, Iterable, Iterator, List, Mapping, Optional, Sequence
 
 import grpc
 
@@ -1214,6 +1214,39 @@ class Hippocampus(_Surface):
     ) -> Any:
         return convert(self._call(method, request, timeout))
 
+    def watch(
+        self,
+        *,
+        kinds: Sequence[int] = (),
+        timeout: Optional[float] = None,
+    ) -> Iterator[pb.WatchEvent]:
+        """Follow the store's changes as they commit, until the iterator is closed.
+
+            for event in client.watch(kinds=[pb.CALLBACK_KIND_MEMORY_FORGOTTEN]):
+                ...
+
+        Live only: what happened before the first event is not replayed, and a non-zero
+        `event.dropped` means this watcher fell behind and anything it mirrors wants re-reading.
+        `timeout` is a deadline for the whole stream, and none by default - the client's per-call
+        timeout would end a watch that is meant to run indefinitely. Ending the iteration cancels
+        the call.
+        """
+
+        call = self.stub.Watch(
+            pb.WatchRequest(kinds=list(kinds)), timeout=timeout, metadata=self._metadata
+        )
+
+        try:
+            for event in call:
+                yield event
+        except grpc.RpcError as error:
+            if error.code() == grpc.StatusCode.CANCELLED:
+                return
+
+            raise errors.translate(error) from error
+        finally:
+            call.cancel()
+
 
 
 def _build_channel(
@@ -1329,6 +1362,29 @@ class AsyncHippocampus(_Surface):
             raise errors.translate(error) from error
 
         return convert(response)
+
+    async def watch(
+        self,
+        *,
+        kinds: Sequence[int] = (),
+        timeout: Optional[float] = None,
+    ) -> AsyncIterator[pb.WatchEvent]:
+        """`Hippocampus.watch` for asyncio: iterate it with `async for` rather than awaiting it."""
+
+        call = self.stub.Watch(
+            pb.WatchRequest(kinds=list(kinds)), timeout=timeout, metadata=self._metadata
+        )
+
+        try:
+            async for event in call:
+                yield event
+        except grpc.RpcError as error:
+            if error.code() == grpc.StatusCode.CANCELLED:
+                return
+
+            raise errors.translate(error) from error
+        finally:
+            call.cancel()
 
 
 def connect_async(address: str, **kwargs: Any) -> AsyncHippocampus:

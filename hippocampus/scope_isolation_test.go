@@ -1268,6 +1268,10 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 		"ReplaceMemoriesWithSummary": true,
 		"SummariseMemories":          true,
 
+		// TestGroupScopeIsolation_Watch, in watch_test.go: it needs the hub registered and a stream
+		// to receive on, which the shared fixture above has neither of.
+		"Watch": true,
+
 		// TestGroupScopeIsolation_Admin
 		"Purge":                   true,
 		"Sleep":                   true,
@@ -1303,9 +1307,9 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 		"DeleteEventsByFilter":   true,
 	}
 
-	for _, m := range contract.Hippocampus_ServiceDesc.Methods {
-		if !covered[m.MethodName] {
-			t.Errorf("RPC %q is not covered by the group-scope isolation tests - add a subtest in scope_isolation_test.go, or record here why it needs none", m.MethodName)
+	for _, rpc := range contract.RPCNames() {
+		if !covered[rpc] {
+			t.Errorf("RPC %q is not covered by the group-scope isolation tests - add a subtest in scope_isolation_test.go, or record here why it needs none", rpc)
 		}
 	}
 }

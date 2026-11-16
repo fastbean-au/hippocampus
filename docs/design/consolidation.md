@@ -252,3 +252,30 @@ from viper once in `New()`. `sleep.go` holds the core consolidation logic:
   still deletes, and a failure to _measure_ the backlog is not a stall. The storage half is one SQL
   fragment on the three prune statements, empty unless the policy retains, with the byte cap's
   running total still summing every row and only its DELETE narrowed. See TODO 107.2/119.
+
+- **The `Watch` change feed (TODO-3 item 193)** is the callback deliveries handed to an in-process
+  hub after their transaction commits, streamed by a server-streaming RPC. (1) **Live and
+  best-effort, not resumable.** The callback queue's `seq` looked like the cursor but is not one: a
+  row is deleted once delivered, written only on the consolidating instance, and only with
+  `callbacks.*` configured. Resuming would need a durable change log on every write with its own
+  retention; the integrations asking for this re-read after a gap, which `dropped` tells them to do.
+  (2) **Reuses the deliveries** rather than describing changes a second way: they are built at the
+  right points already, from the rows actually affected, with the group a scoped watcher is filtered
+  by captured while the row exists. A watcher widens what is _captured_ (every cause, both kinds,
+  writes), never what is _queued_: `recordChanges` stages the lot and `queueable` filters what the
+  callback policy asked for, and bodies are read only for `callbacks.includeBodies` and stripped
+  from the feed. (3) **Staged, then published.** A delivery is held against its `*sql.Tx` and
+  published by `d.commit` after a successful commit; the cancel every `beginTx` caller defers
+  discards what a rolled-back transaction staged. A watcher must never hear about a change a
+  rollback undid. (4) **Never slows the store.** `Publish` runs on the committing goroutine and only
+  offers to each watcher's buffer (`watchBuffer`, 256), counting drops. `Watching()` is one atomic
+  load, so with nobody subscribed every gate is false and the paths are as they were. (5) **Per
+  instance**: a replica's watchers see its writes, the consolidator's see what is forgotten. (6)
+  **gRPC only**: the gateway's in-process registration cannot stream. (7) **The interceptor chain
+  was unary-only** until this RPC, so a stream would have reached no authentication,
+  authorisation or rate limit. `streamFromUnary` runs the same chain around a stream (none of the
+  interceptors reads the request), scoped to the Hippocampus service so reflection is unchanged;
+  `TestRun_WatchIsGuarded` fails if it is unwired. Drift guards walk `contract.RPCNames()`, because
+  grpc-go lists streams apart from methods and a guard over `Methods` alone never saw `Watch`. (8)
+  **Shutdown** closes the hub before `GracefulStop`, which otherwise waits on every open stream
+  until its timeout. `Watch` is excluded from the latency alert, as the other long RPCs are.

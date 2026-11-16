@@ -61,6 +61,7 @@ COVERAGE = {
     "ImportBatch": "import_batch",
     "Transfer": "transfer",
     "Clear": "clear",
+    "Watch": "watch",
 }
 
 

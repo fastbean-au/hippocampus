@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -19,6 +20,9 @@ type fakeClient struct {
 	whoAmIResp   *contract.WhoAmIResponse
 	topologyResp *contract.GetTopologyResponse
 	linksResp    *contract.GetLinksResponse
+
+	// watchEvents are what Watch's stream yields, before it ends with io.EOF.
+	watchEvents []*contract.WatchEvent
 }
 
 func (f *fakeClient) capture(req proto.Message) { f.req = req }
@@ -254,6 +258,34 @@ func (f *fakeClient) Transfer(_ context.Context, in *contract.TransferRequest, _
 	f.capture(in)
 
 	return &contract.TransferResponse{ManifestId: "man-2"}, f.err
+}
+
+func (f *fakeClient) Watch(_ context.Context, in *contract.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[contract.WatchEvent], error) {
+	f.capture(in)
+
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	return &fakeWatchStream{events: f.watchEvents}, nil
+}
+
+// fakeWatchStream yields its events, then io.EOF as a stream the service ended does.
+type fakeWatchStream struct {
+	grpc.ClientStream
+
+	events []*contract.WatchEvent
+}
+
+func (s *fakeWatchStream) Recv() (*contract.WatchEvent, error) {
+	if len(s.events) == 0 {
+		return nil, io.EOF
+	}
+
+	event := s.events[0]
+	s.events = s.events[1:]
+
+	return event, nil
 }
 
 func (f *fakeClient) Clear(_ context.Context, in *contract.ClearRequest, _ ...grpc.CallOption) (*contract.ClearResponse, error) {

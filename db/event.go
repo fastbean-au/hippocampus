@@ -305,7 +305,7 @@ func (d *DB) DeleteEvent(ctx context.Context, id string) (bool, error) {
 		return false, err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := d.commit(tx); err != nil {
 		return false, err
 	}
 
@@ -375,7 +375,7 @@ func (d *DB) DeleteEventIfEmpty(ctx context.Context, id string, cause DeleteCaus
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := d.commit(tx); err != nil {
 		return false, err
 	}
 
@@ -896,7 +896,7 @@ func (d *DB) deleteEventCascadeOnce(ctx context.Context, id string, opts EventCa
 		return fail(err)
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := d.commit(tx); err != nil {
 		return EventDeletion{}, err
 	}
 
@@ -928,7 +928,7 @@ func (d *DB) deleteEventMemoriesById(tx *sql.Tx, ids []string) error {
 	}
 
 	if notifying {
-		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+		if err := d.recordChanges(tx, []CallbackDelivery{delivery}); err != nil {
 			return err
 		}
 	}

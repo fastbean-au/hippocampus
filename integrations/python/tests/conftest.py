@@ -224,6 +224,12 @@ class FakeService(rpc.HippocampusServicer):
     def Clear(self, request, context):
         return self._record("Clear", request, context, pb.ClearResponse())
 
+    # The change feed: streams whatever the test queued under "Watch", then ends.
+
+    def Watch(self, request, context):
+        for event in self._record("Watch", request, context, []):
+            yield event
+
 
 @pytest.fixture
 def service() -> FakeService:

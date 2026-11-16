@@ -63,7 +63,19 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Added
+
+- **`Watch` streams the store's changes over gRPC.** Memories stored, updated and forgotten, events
+  forgotten, and each finished sleep cycle, filtered by kind and by the caller's group scope, at the
+  `reader` tier. It is live and best-effort, with no cursor, and gRPC only. For clients that cannot
+  run a webhook receiver. `hippo watch` and the Python client's `watch()` follow it. See
+  [Watching for changes](docs/api.md#watching-for-changes).
+
 ### Security
+
+- **Streaming RPCs now run the interceptor chain.** It was unary-only, which reflection was the only
+  stream to rely on. `Watch` is authenticated, authorised and rate limited like any other RPC, and
+  reflection is unchanged.
 
 - **The built-in role names can be turned off under `idp`.** `reader`, `writer` and `admin` always
   granted their tiers, so on a shared role namespace (Keycloak's `realm_access.roles`) an unrelated

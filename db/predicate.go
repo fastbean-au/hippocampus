@@ -258,7 +258,7 @@ func (d *DB) deleteEventsOnce(ctx context.Context, ids []string) (int, error) {
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := d.commit(tx); err != nil {
 		return 0, err
 	}
 

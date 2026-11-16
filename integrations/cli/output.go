@@ -33,6 +33,55 @@ func (r *renderer) render(msg proto.Message) error {
 	return r.renderText(msg)
 }
 
+// renderWatchEvent writes one Watch event. JSON is one compact object per line, so a script can
+// read the stream a line at a time; text is one line per event.
+func (r *renderer) renderWatchEvent(event *contract.WatchEvent) error {
+	if r.json {
+		data, err := protojson.Marshal(event)
+		if err != nil {
+			return fmt.Errorf("failed to encode event: %w", err)
+		}
+
+		_, err = fmt.Fprintln(r.out, string(data))
+
+		return err
+	}
+
+	if event.GetDropped() > 0 {
+		r.line("%d events dropped: this watcher fell behind", event.GetDropped())
+	}
+
+	kind := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(event.GetKind().String(), "CALLBACK_KIND_"), "_", "-"))
+
+	if cycle := event.GetCycle(); cycle != nil {
+		r.line("%s  %s  consolidated %d, evicted %d, expired %d",
+			formatNanos(event.GetTime()),
+			kind,
+			cycle.GetMemoriesConsolidated(),
+			cycle.GetMemoriesEvicted(),
+			cycle.GetMemoriesExpired(),
+		)
+
+		return nil
+	}
+
+	ids := make([]string, 0, len(event.GetItems()))
+
+	for _, item := range event.GetItems() {
+		ids = append(ids, item.GetId())
+	}
+
+	cause := ""
+
+	if event.GetCause() != contract.DeleteCause_DELETE_CAUSE_UNSPECIFIED {
+		cause = " (" + strings.ToLower(strings.TrimPrefix(event.GetCause().String(), "DELETE_CAUSE_")) + ")"
+	}
+
+	r.line("%s  %s%s  %s", formatNanos(event.GetTime()), kind, cause, strings.Join(ids, ", "))
+
+	return nil
+}
+
 // writeJSON emits msg as indented protojson followed by a newline. It is the single JSON-encoding
 // site, shared by the --output json path and renderText's fallback for types without a bespoke text
 // form.

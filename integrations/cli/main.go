@@ -112,7 +112,7 @@ func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 
 	defer func() { _ = closeClient() }()
 
-	if cfg.Timeout > 0 {
+	if cfg.Timeout > 0 && !cmd.streaming {
 		var cancel context.CancelFunc
 
 		ctx, cancel = context.WithTimeout(ctx, cfg.Timeout)

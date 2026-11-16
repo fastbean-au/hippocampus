@@ -1751,6 +1751,8 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.callbacks.abandoned`            | counter       |                                       | Queued callbacks discarded at the caps or undecodable — unlike an index deletion, nothing recovers these               |
 | `hippocampus.callbacks.delivery.duration`    | histogram (s) | `outcome`                             | How long one delivery attempt took                                                                                     |
 | `hippocampus.forgetting.stalls`              | counter       | `reason`                              | Sleep cycles whose decay passes were held off — the store has stopped forgetting                                       |
+| `hippocampus.watch.subscribers`              | gauge         |                                       | [`Watch`](api.md#watching-for-changes) streams open on this instance                                                   |
+| `hippocampus.watch.dropped`                  | counter       |                                       | `Watch` events dropped because a watcher was not reading fast enough; each watcher is told how many it missed          |
 
 Three things the shape of this list says. The **`search.*` instruments exist only under
 `opensearch.enabled`** — the built-in content index runs inside the primary write and has no queue to

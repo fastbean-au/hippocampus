@@ -79,6 +79,15 @@ func adminCommands() map[string]command {
 			},
 			run: runCallbackQueue,
 		},
+		"watch": {
+			summary:   "follow the store's changes as they commit, until interrupted (gRPC only)",
+			hint:      "[--kind K]...",
+			streaming: true,
+			flags: func(fs *pflag.FlagSet) {
+				fs.StringSlice("kind", nil, "only this kind (repeatable): memory-stored, memory-updated, memory-forgotten, event-forgotten or sleep-completed")
+			},
+			run: runWatch,
+		},
 		"callbacks clear": {
 			summary: "discard pending callbacks (destructive)",
 			hint:    "--before T | --all",

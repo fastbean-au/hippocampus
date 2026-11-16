@@ -28,6 +28,10 @@ type command struct {
 	hint    string
 	flags   func(*pflag.FlagSet)
 	run     handler
+
+	// streaming marks a command that runs until it is interrupted (watch), which the per-request
+	// --timeout-seconds would otherwise end after thirty seconds.
+	streaming bool
 }
 
 // commandAreas are the per-area halves of the registry, each in its own commands_<area>.go file.
@@ -1189,6 +1193,47 @@ func runCallbackQueue(ctx context.Context, client contract.HippocampusClient, fs
 	return r.render(resp)
 }
 
+// runWatch follows the store's changes until interrupted, one event per line. It needs the gRPC
+// transport: the gateway cannot stream, and the HTTP client says so.
+func runWatch(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	var kinds []contract.CallbackKind
+
+	for _, value := range strs(fs, "kind") {
+		kind, err := callbackKindNamed(value, "kind")
+		if err != nil {
+			return err
+		}
+
+		kinds = append(kinds, kind)
+	}
+
+	stream, err := client.Watch(ctx, &contract.WatchRequest{Kinds: kinds})
+	if err != nil {
+		return err
+	}
+
+	for {
+		event, err := stream.Recv()
+
+		switch {
+
+		case err == nil:
+
+		case ctx.Err() != nil, errors.Is(err, io.EOF):
+			// Interrupted, which is how a watch is meant to end, or ended by the service.
+			return nil
+
+		default:
+			return err
+
+		}
+
+		if err := r.renderWatchEvent(event); err != nil {
+			return err
+		}
+	}
+}
+
 // runCallbackClear discards pending deliveries. It requires --before or --all for the same reason
 // the RPC does, and a sharper one than the forgotten log's: what this destroys is not a record of a
 // notification but the notification itself, and nothing else will ever send it.
@@ -1218,7 +1263,12 @@ func runCallbackClear(ctx context.Context, client contract.HippocampusClient, fs
 // callbackKindFromFlag maps the operator-facing spelling onto the wire enum. An empty flag means
 // every kind, which is what the RPC reads UNSPECIFIED as.
 func callbackKindFromFlag(fs *pflag.FlagSet, name string) (contract.CallbackKind, error) {
-	switch strings.ToLower(strings.TrimSpace(str(fs, name))) {
+	return callbackKindNamed(str(fs, name), name)
+}
+
+// callbackKindNamed is callbackKindFromFlag for one value, so a repeatable flag can parse each.
+func callbackKindNamed(value string, name string) (contract.CallbackKind, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
 
 	case "":
 		return contract.CallbackKind_CALLBACK_KIND_UNSPECIFIED, nil

@@ -166,6 +166,8 @@ func (s *Server) sleep(trigger string) error {
 	// a receiver needs to hear as a clean run. Best-effort, and never allowed to fail the cycle.
 	s.queueCycleCallback(ctx, cycleId, report)
 
+	s.watch.publishCycle(cycleId, report)
+
 	return err
 }
 

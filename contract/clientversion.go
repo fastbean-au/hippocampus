@@ -45,3 +45,21 @@ func UnaryClientVersionInterceptor(version string) grpc.UnaryClientInterceptor {
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}
 }
+
+// StreamClientVersionInterceptor is UnaryClientVersionInterceptor for a streaming RPC (Watch).
+func StreamClientVersionInterceptor(version string) grpc.StreamClientInterceptor {
+	return func(
+		ctx context.Context,
+		desc *grpc.StreamDesc,
+		cc *grpc.ClientConn,
+		method string,
+		streamer grpc.Streamer,
+		opts ...grpc.CallOption,
+	) (grpc.ClientStream, error) {
+		if version != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, ClientVersionHeader, version)
+		}
+
+		return streamer(ctx, desc, cc, method, opts...)
+	}
+}

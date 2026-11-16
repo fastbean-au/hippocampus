@@ -62,6 +62,7 @@ const (
 	Hippocampus_Clear_FullMethodName                      = "/hippocampus.v1.Hippocampus/Clear"
 	Hippocampus_DeleteMemoriesByFilter_FullMethodName     = "/hippocampus.v1.Hippocampus/DeleteMemoriesByFilter"
 	Hippocampus_DeleteEventsByFilter_FullMethodName       = "/hippocampus.v1.Hippocampus/DeleteEventsByFilter"
+	Hippocampus_Watch_FullMethodName                      = "/hippocampus.v1.Hippocampus/Watch"
 )
 
 // HippocampusClient is the client API for Hippocampus service.
@@ -347,6 +348,26 @@ type HippocampusClient interface {
 	// delete_memories decides what happens to each event's memories, exactly as DeleteEvent's
 	// memories flag does: set, they go with their event; unset, they survive with no event.
 	DeleteEventsByFilter(ctx context.Context, in *DeleteEventsByFilterRequest, opts ...grpc.CallOption) (*DeleteEventsByFilterResponse, error)
+	// Watch streams changes to the store as they happen: memories stored, updated and forgotten,
+	// events forgotten, and each finished sleep cycle. It is the pull counterpart of the callbacks.*
+	// webhooks, over the connection a client already holds, so a client behind NAT or a broker
+	// bridge can follow the store without running an HTTP receiver the service must reach.
+	//
+	// It is LIVE AND BEST-EFFORT. A watcher sees what this instance commits from the moment it
+	// subscribes - which is when the response headers arrive - and nothing from before; there is no cursor to resume from, so a client that
+	// reconnects re-reads whatever it needs (GetMemories, GetForgottenMemories) rather than
+	// replaying. A watcher that falls behind is not allowed to slow the store down: the events it
+	// could not take are dropped and counted, and the next event it does receive reports how many
+	// in dropped. On PostgreSQL and MySQL each instance publishes only its own changes, so forgetting
+	// is seen on the consolidating instance and a write on the instance that served it.
+	//
+	// A group-scoped caller sees only items in its groups; a forgotten memory or event is reported
+	// with the group it had. A cycle's completion is store-global counts, as GetConsolidationStatus
+	// reports them, and goes to every watcher. No event ever carries a memory body.
+	//
+	// gRPC only: the JSON gateway serves its calls in process, which cannot stream, so this RPC has
+	// no /v1 route.
+	Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchEvent], error)
 }
 
 type hippocampusClient struct {
@@ -787,6 +808,25 @@ func (c *hippocampusClient) DeleteEventsByFilter(ctx context.Context, in *Delete
 	return out, nil
 }
 
+func (c *hippocampusClient) Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Hippocampus_ServiceDesc.Streams[0], Hippocampus_Watch_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchRequest, WatchEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Hippocampus_WatchClient = grpc.ServerStreamingClient[WatchEvent]
+
 // HippocampusServer is the server API for Hippocampus service.
 // All implementations must embed UnimplementedHippocampusServer
 // for forward compatibility.
@@ -1070,6 +1110,26 @@ type HippocampusServer interface {
 	// delete_memories decides what happens to each event's memories, exactly as DeleteEvent's
 	// memories flag does: set, they go with their event; unset, they survive with no event.
 	DeleteEventsByFilter(context.Context, *DeleteEventsByFilterRequest) (*DeleteEventsByFilterResponse, error)
+	// Watch streams changes to the store as they happen: memories stored, updated and forgotten,
+	// events forgotten, and each finished sleep cycle. It is the pull counterpart of the callbacks.*
+	// webhooks, over the connection a client already holds, so a client behind NAT or a broker
+	// bridge can follow the store without running an HTTP receiver the service must reach.
+	//
+	// It is LIVE AND BEST-EFFORT. A watcher sees what this instance commits from the moment it
+	// subscribes - which is when the response headers arrive - and nothing from before; there is no cursor to resume from, so a client that
+	// reconnects re-reads whatever it needs (GetMemories, GetForgottenMemories) rather than
+	// replaying. A watcher that falls behind is not allowed to slow the store down: the events it
+	// could not take are dropped and counted, and the next event it does receive reports how many
+	// in dropped. On PostgreSQL and MySQL each instance publishes only its own changes, so forgetting
+	// is seen on the consolidating instance and a write on the instance that served it.
+	//
+	// A group-scoped caller sees only items in its groups; a forgotten memory or event is reported
+	// with the group it had. A cycle's completion is store-global counts, as GetConsolidationStatus
+	// reports them, and goes to every watcher. No event ever carries a memory body.
+	//
+	// gRPC only: the JSON gateway serves its calls in process, which cannot stream, so this RPC has
+	// no /v1 route.
+	Watch(*WatchRequest, grpc.ServerStreamingServer[WatchEvent]) error
 	mustEmbedUnimplementedHippocampusServer()
 }
 
@@ -1208,6 +1268,9 @@ func (UnimplementedHippocampusServer) DeleteMemoriesByFilter(context.Context, *D
 }
 func (UnimplementedHippocampusServer) DeleteEventsByFilter(context.Context, *DeleteEventsByFilterRequest) (*DeleteEventsByFilterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteEventsByFilter not implemented")
+}
+func (UnimplementedHippocampusServer) Watch(*WatchRequest, grpc.ServerStreamingServer[WatchEvent]) error {
+	return status.Error(codes.Unimplemented, "method Watch not implemented")
 }
 func (UnimplementedHippocampusServer) mustEmbedUnimplementedHippocampusServer() {}
 func (UnimplementedHippocampusServer) testEmbeddedByValue()                     {}
@@ -2004,6 +2067,17 @@ func _Hippocampus_DeleteEventsByFilter_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Hippocampus_Watch_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(HippocampusServer).Watch(m, &grpc.GenericServerStream[WatchRequest, WatchEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Hippocampus_WatchServer = grpc.ServerStreamingServer[WatchEvent]
+
 // Hippocampus_ServiceDesc is the grpc.ServiceDesc for Hippocampus service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2184,6 +2258,12 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Hippocampus_DeleteEventsByFilter_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Watch",
+			Handler:       _Hippocampus_Watch_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "hippocampus.proto",
 }

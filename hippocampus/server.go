@@ -415,7 +415,12 @@ type Server struct {
 	// when nothing is dispatching - no sink is configured, or this is a replica.
 	notifier         notify.Notifier
 	callbacksEnabled bool
-	callbackBounds   db.QueueBounds
+
+	// watch is the Watch RPC's subscribers (watch.go), registered with the store as its change sink.
+	// Built ahead of the sleep loop, so the first cycle's changes have somewhere to go.
+	watch *watchHub
+
+	callbackBounds db.QueueBounds
 
 	// callbacksConfig is the callbacks.* configuration, kept so a standby that takes over can start
 	// the dispatcher with it (see promote).
@@ -691,6 +696,8 @@ func New(deps Dependencies, cfg Config) *Server {
 		s.logForgettingMode()
 	}
 
+	s.startWatch()
+
 	s.autoSleep(reset, period)
 
 	s.startReconcile(deps.Search)
@@ -897,6 +904,8 @@ func (s *Server) Stop() {
 		s.stopInstanceHeartbeat()
 
 		s.stopTopologyProber()
+
+		s.watch.close()
 
 		if s.stopCallbacks != nil {
 			close(s.stopCallbacks)

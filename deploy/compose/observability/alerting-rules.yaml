@@ -106,7 +106,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: histogram_quantile(0.95, sum by (le, service_name) (rate(hippocampus_rpc_duration_seconds_bucket{rpc!~"Sleep|Purge|Export|Import|ImportBatch|Transfer|Clear|PreviewConsolidation|SummariseMemories"}[5m]))) > 1
+              expr: histogram_quantile(0.95, sum by (le, service_name) (rate(hippocampus_rpc_duration_seconds_bucket{rpc!~"Sleep|Purge|Export|Import|ImportBatch|Transfer|Clear|PreviewConsolidation|SummariseMemories|Watch"}[5m]))) > 1
           - refId: B
             datasourceUid: __expr__
             model:

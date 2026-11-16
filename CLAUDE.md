@@ -117,7 +117,10 @@ Each of these has failed before or would fail silently. The test named beside it
   `cmd/hippocampus/rpcmetrics.go` and `hippocampus/server.go`. A stale copy fails **open**.
   `TestServicePrefixMatchesDescriptor` (one per package).
 - **Every RPC has a tier, a scope mode and an isolation subtest.** `TestPoliciesCoverEveryRPC`,
-  `TestScopesCoverEveryRPC`, `TestEveryRPCIsCoveredByIsolationTest`.
+  `TestScopesCoverEveryRPC`, `TestEveryRPCIsCoveredByIsolationTest`. Guards walk
+  `contract.RPCNames()`: grpc-go lists streaming RPCs (`Watch`) apart from unary ones.
+- **A streaming RPC runs the same interceptor chain** (`streamFromUnary`), or it is served without
+  authentication. `TestRun_WatchIsGuarded`.
 - **An out-of-scope id the caller named reports `NotFound`**, never `PermissionDenied`, and an
   unnamed one is dropped silently. `TestGroupScopeIsolation*`.
 - **The `hippocampus` package reads no configuration**: `New` takes a `Config` that

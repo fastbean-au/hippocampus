@@ -594,14 +594,14 @@ func (d *DB) deleteMemoriesByIdsOnce(ctx context.Context, ids []string) (int, er
 	}
 
 	if notifying {
-		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+		if err := d.recordChanges(tx, []CallbackDelivery{delivery}); err != nil {
 			_ = tx.Rollback()
 
 			return 0, err
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := d.commit(tx); err != nil {
 		return 0, err
 	}
 
@@ -697,7 +697,7 @@ func (d *DB) deleteMemoriesIfUnrecalledOnce(
 	// deleted, so doing it twice would double the cost of having both on for no gain. Only the body
 	// is asked for conditionally, being the expensive column.
 	capturing := recording || notifying
-	withBodies := notifying && d.callbacks.IncludeBodies
+	withBodies := d.queuesMemoryCallbacks(reason.cause) && d.callbacks.IncludeBodies
 
 	deletedIds := make([]string, 0, len(items))
 
@@ -770,13 +770,13 @@ func (d *DB) deleteMemoriesIfUnrecalledOnce(
 	// commit with the deletion or not at all, so there is no boundary at which the notification can
 	// be lost and no window in which it can describe a memory that is still there. See
 	// db/callbacks.go.
-	if err := d.queueCallbacks(tx, deliveries); err != nil {
+	if err := d.recordChanges(tx, deliveries); err != nil {
 		_ = tx.Rollback()
 
 		return nil, err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := d.commit(tx); err != nil {
 		return nil, err
 	}
 
@@ -948,7 +948,7 @@ func (d *DB) DeleteEventMemories(ctx context.Context, eventId string, groups []s
 	}
 
 	if notifying {
-		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+		if err := d.recordChanges(tx, []CallbackDelivery{delivery}); err != nil {
 			_ = tx.Rollback()
 
 			return 0, err
@@ -974,7 +974,7 @@ func (d *DB) DeleteEventMemories(ctx context.Context, eventId string, groups []s
 		return 0, err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := d.commit(tx); err != nil {
 		return 0, err
 	}
 
@@ -1538,7 +1538,7 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 	}
 
 	if notifying {
-		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+		if err := d.recordChanges(tx, []CallbackDelivery{delivery}); err != nil {
 			_ = tx.Rollback()
 
 			return 0, err
@@ -1590,7 +1590,7 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 		return 0, err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := d.commit(tx); err != nil {
 		return 0, err
 	}
 

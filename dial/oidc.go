@@ -309,3 +309,27 @@ func bearerInterceptor(src TokenSource) grpc.UnaryClientInterceptor {
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}
 }
+
+// bearerStreamInterceptor is bearerInterceptor for a streaming RPC (Watch), which the unary chain
+// never sees.
+func bearerStreamInterceptor(src TokenSource) grpc.StreamClientInterceptor {
+	return func(
+		ctx context.Context,
+		desc *grpc.StreamDesc,
+		cc *grpc.ClientConn,
+		method string,
+		streamer grpc.Streamer,
+		opts ...grpc.CallOption,
+	) (grpc.ClientStream, error) {
+		token, err := src.Token(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("obtaining bearer token: %w", err)
+		}
+
+		if token != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
+		}
+
+		return streamer(ctx, desc, cc, method, opts...)
+	}
+}

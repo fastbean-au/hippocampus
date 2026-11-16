@@ -561,6 +561,27 @@ service Hippocampus {
 			body: "*"
 		};
 	}
+
+	// Watch streams changes to the store as they happen: memories stored, updated and forgotten,
+	// events forgotten, and each finished sleep cycle. It is the pull counterpart of the callbacks.*
+	// webhooks, over the connection a client already holds, so a client behind NAT or a broker
+	// bridge can follow the store without running an HTTP receiver the service must reach.
+	//
+	// It is LIVE AND BEST-EFFORT. A watcher sees what this instance commits from the moment it
+	// subscribes - which is when the response headers arrive - and nothing from before; there is no cursor to resume from, so a client that
+	// reconnects re-reads whatever it needs (GetMemories, GetForgottenMemories) rather than
+	// replaying. A watcher that falls behind is not allowed to slow the store down: the events it
+	// could not take are dropped and counted, and the next event it does receive reports how many
+	// in dropped. On PostgreSQL and MySQL each instance publishes only its own changes, so forgetting
+	// is seen on the consolidating instance and a write on the instance that served it.
+	//
+	// A group-scoped caller sees only items in its groups; a forgotten memory or event is reported
+	// with the group it had. A cycle's completion is store-global counts, as GetConsolidationStatus
+	// reports them, and goes to every watcher. No event ever carries a memory body.
+	//
+	// gRPC only: the JSON gateway serves its calls in process, which cannot stream, so this RPC has
+	// no /v1 route.
+	rpc Watch(WatchRequest) returns (stream WatchEvent) {}
 }
 
 // Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an
@@ -1468,6 +1489,40 @@ message DeleteCallbackQueueRequest {
 // DeleteCallbackQueueResponse reports how many queued deliveries were discarded.
 message DeleteCallbackQueueResponse {
 	int64                                  deleted                   = 1; // deliveries discarded
+}
+
+// WatchRequest selects what a Watch stream carries. An empty request carries every kind.
+message WatchRequest {
+	// kinds limits the stream to these kinds. MEMORIES_AT_RISK is refused: it costs a preview scan
+	// per cycle and is a callbacks.* delivery only. Empty carries every other kind.
+	repeated CallbackKind                  kinds                     = 1;
+}
+
+// WatchItem is one memory or event a WatchEvent is about, as it stood when the change committed.
+message WatchItem {
+	string                                 id                        = 1; // the memory's or the event's id
+	string                                 event_id                  = 2; // for a memory, the event it belongs to; empty otherwise
+	string                                 group                     = 3; // the group it was stored under; empty when ungrouped
+	int32                                  significance              = 4; // its significance rank
+	int64                                  bytes                     = 5; // a memory's body size; 0 for an event
+}
+
+// WatchEvent is one change, as committed.
+//
+// A deletion that removed many records arrives as one event carrying all of them, in the batches
+// the store deleted them in, rather than one event per record.
+message WatchEvent {
+	CallbackKind                           kind                      = 1; // what the event reports
+	DeleteCause                            cause                     = 2; // what deleted the items, for a forgotten event; UNSPECIFIED otherwise
+	int64                                  cycle_id                  = 3; // the sleep cycle a decay deletion or a completion belongs to; 0 outside a cycle
+	int64                                  time                      = 4; // UnixNano; when the change was published
+	repeated WatchItem                     items                     = 5; // the memories or events; empty for a completion
+	CycleReport                            cycle                     = 6; // what the cycle did, for SLEEP_COMPLETED; absent otherwise
+
+	// dropped is how many events this watcher missed since the previous one it received, because
+	// it was not reading fast enough. Nonzero means the watcher's view has a gap and anything it
+	// mirrors wants re-reading.
+	int64                                  dropped                   = 7;
 }
 
 // DecayCurveRequest asks for the curve the configured decay algorithm produces for one significance

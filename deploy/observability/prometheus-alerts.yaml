@@ -76,7 +76,7 @@ groups:
       # this alert fired permanently, on every deployment with traffic, until 2026-08-29.
       # cmd/hippocampus/rpcbuckets_test.go is what holds the two together.
       - alert: HippocampusRequestLatencyHigh
-        expr: histogram_quantile(0.95, sum by (le, service_name) (rate(hippocampus_rpc_duration_seconds_bucket{rpc!~"Sleep|Purge|Export|Import|ImportBatch|Transfer|Clear|PreviewConsolidation|SummariseMemories"}[5m]))) > 1
+        expr: histogram_quantile(0.95, sum by (le, service_name) (rate(hippocampus_rpc_duration_seconds_bucket{rpc!~"Sleep|Purge|Export|Import|ImportBatch|Transfer|Clear|PreviewConsolidation|SummariseMemories|Watch"}[5m]))) > 1
         for: 15m
         labels:
           severity: warning

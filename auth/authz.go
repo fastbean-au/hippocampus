@@ -155,6 +155,12 @@ var policies = map[string]rpcPolicy{
 	// log is the case where this wants to be admin again.
 	"GetForgottenMemories": {TierReader, http.MethodGet, "/v1/memories/forgotten"},
 
+	// The change feed is a read of the same records GetMemories and GetForgottenMemories serve at
+	// this tier - ids, groups, significances, never a body - delivered as they change rather than
+	// when asked, and filtered by the caller's scope like them. It has no gateway route: the gateway
+	// serves its calls in process, which cannot stream.
+	"Watch": {TierReader, "", ""},
+
 	// writes
 	"StoreEvent":                 {TierWriter, http.MethodPost, "/v1/events"},
 	"EndEvent":                   {TierWriter, http.MethodPost, "/v1/events/*/end"},
@@ -246,6 +252,10 @@ var routeRPCs = func() map[string]string {
 	out := make(map[string]string, len(policies))
 
 	for method, p := range policies {
+		if p.httpPath == "" {
+			continue
+		}
+
 		out[p.httpMethod+" "+p.httpPath] = method
 	}
 
@@ -379,7 +389,11 @@ func NewAuthoriser(roleMapping map[string]string,
 		}
 
 		methodTiers[hippocampusServicePrefix+method] = tier
-		gatewayTiers[p.httpMethod+" "+p.httpPath] = tier
+
+		// A gRPC-only RPC (Watch) has no route for the gateway to authorise.
+		if p.httpPath != "" {
+			gatewayTiers[p.httpMethod+" "+p.httpPath] = tier
+		}
 	}
 
 	return &Authoriser{

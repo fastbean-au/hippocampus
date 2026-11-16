@@ -91,16 +91,26 @@ func Dial(cfg Config) (*grpc.ClientConn, contract.HippocampusClient, error) {
 	// which is exactly the latency an operator would want to see attributed to the RPC.
 	interceptors := append([]grpc.UnaryClientInterceptor{}, cfg.Interceptors...)
 
+	// A streaming RPC (Watch) runs only the stream chain, so the token and the version header are
+	// attached there too - without them a Watch was refused by any service with auth on.
+	var streamInterceptors []grpc.StreamClientInterceptor
+
 	if source != nil {
 		interceptors = append(interceptors, bearerInterceptor(source))
+		streamInterceptors = append(streamInterceptors, bearerStreamInterceptor(source))
 	}
 
 	if cfg.ClientVersion != "" {
 		interceptors = append(interceptors, contract.UnaryClientVersionInterceptor(cfg.ClientVersion))
+		streamInterceptors = append(streamInterceptors, contract.StreamClientVersionInterceptor(cfg.ClientVersion))
 	}
 
 	if len(interceptors) > 0 {
 		dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(interceptors...))
+	}
+
+	if len(streamInterceptors) > 0 {
+		dialOpts = append(dialOpts, grpc.WithChainStreamInterceptor(streamInterceptors...))
 	}
 
 	conn, err := grpc.NewClient(cfg.Address, dialOpts...)

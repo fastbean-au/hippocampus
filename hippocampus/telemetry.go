@@ -95,6 +95,10 @@ type telemetry struct {
 	callbacksAbandoned metric.Int64Counter
 	callbackDuration   metric.Float64Histogram
 
+	// The Watch RPC's subscribers, and the events offered to one whose buffer was full.
+	watchSubscribers metric.Int64Gauge
+	watchDropped     metric.Int64Counter
+
 	summarisationCandidates metric.Int64Gauge
 	memoriesSummarised      metric.Int64Counter
 	summariesCreated        metric.Int64Counter
@@ -211,6 +215,9 @@ func newTelemetry() *telemetry {
 		callbacksDelivered: newInt64Counter(meter, "hippocampus.callbacks.delivered", "Callback delivery attempts, by kind and outcome."),
 		callbacksAbandoned: newInt64Counter(meter, "hippocampus.callbacks.abandoned", "Queued callbacks discarded by the queue caps, or because their payload could not be decoded, before the receiver accepted them. Unlike a dropped index deletion, nothing recovers these."),
 		callbackDuration:   newFloat64Histogram(meter, "hippocampus.callbacks.delivery.duration", "s", "Duration of one callback delivery attempt in seconds.", observability.LatencyBuckets()),
+
+		watchSubscribers: newInt64Gauge(meter, "hippocampus.watch.subscribers", "Watch streams open on this instance."),
+		watchDropped:     newInt64Counter(meter, "hippocampus.watch.dropped", "Watch events dropped because a watcher was not reading fast enough. Each watcher is told how many it missed."),
 
 		summarisationCandidates: newInt64Gauge(meter, "hippocampus.summarisation_candidates", "Number of events identified as summarisation candidates by the most recent sleep cycle."),
 		memoriesSummarised:      newInt64Counter(meter, "hippocampus.memories.summarised", "Number of memories replaced by a summary memory (ReplaceMemoriesWithSummary or SummariseMemories)."),
