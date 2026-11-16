@@ -12,7 +12,10 @@ restricted to a single algorithm via `jwt.WithValidMethods` (so a token can neve
 and both requiring an `exp` claim via `jwt.WithExpirationRequired` (golang-jwt only validates `exp`
 when present, so this stops an expiry-less token verifying forever): `HMACVerifier` (HS256; built from an `HMACConfig` of a legacy single `signingSecret` plus
 any number of `kid`-tagged `signingKeys` — every key verifies, so a new secret rotates in while
-old tokens still verify; a kid-less token uses the legacy secret, an unknown kid is rejected) and
+old tokens still verify; a kid-less token uses the legacy secret, an unknown kid is rejected; with
+`auth.audience` set, `aud` must carry it, so instances that reuse a secret do not accept each
+other's tokens, and `--mint-token` stamps it - TODO-3 #189. It reuses the idp key rather than adding
+an hmac-only one: the meaning, "tokens for this service", is the same) and
 `JWKSVerifier` (`jwks.go`; RS256 against an
 identity provider's JWKS — endpoint from `auth.jwksUrl` or OIDC discovery via `auth.issuer`,
 keys cached by kid, re-fetched lazily on `auth.jwksRefreshIntervalSeconds` plus one

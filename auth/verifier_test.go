@@ -316,3 +316,47 @@ func TestHMACVerifier_RejectsGarbage(t *testing.T) {
 		t.Error("expected a malformed token to be rejected")
 	}
 }
+
+// TestHMACVerifier_Audience verifies that a configured audience keeps instances that share a
+// signing secret from accepting each other's tokens: a token minted for one audience is rejected by
+// a verifier expecting another, a token with no audience is rejected once one is configured, and a
+// verifier with no audience still accepts every token its secret signed, so tokens minted before
+// auth.audience was set keep working until the operator sets it.
+func TestHMACVerifier_Audience(t *testing.T) {
+	tests := []struct {
+		name     string
+		minted   string
+		expected string
+		accepted bool
+	}{
+		{name: "matching audience", minted: "production", expected: "production", accepted: true},
+		{name: "other audience", minted: "staging", expected: "production", accepted: false},
+		{name: "no audience minted, one expected", minted: "", expected: "production", accepted: false},
+		{name: "no audience either side", minted: "", expected: "", accepted: true},
+		{name: "audience minted, none expected", minted: "staging", expected: "", accepted: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, err := NewHMACVerifier(HMACConfig{LegacySecret: longSecret, Audience: tt.expected})
+			if err != nil {
+				t.Fatalf("NewHMACVerifier: %s", err)
+			}
+
+			token, err := MintToken(MintRequest{Secret: longSecret, Audience: tt.minted, ClientID: "client-1", TTL: time.Hour})
+			if err != nil {
+				t.Fatalf("MintToken: %s", err)
+			}
+
+			_, err = v.Verify(token)
+
+			if tt.accepted && err != nil {
+				t.Errorf("expected the token to verify, got: %s", err)
+			}
+
+			if !tt.accepted && err == nil {
+				t.Error("expected the token to be rejected")
+			}
+		})
+	}
+}

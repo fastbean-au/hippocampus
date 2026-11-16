@@ -34,7 +34,10 @@ enabled, and a token whose roles resolve to no tier is denied every RPC.
 - **`hmac`** — HS256 against a shared secret. Tokens are minted by the service's own CLI
   (`--mint-token --client-id … --role … --ttl …`), so there is no issuance endpoint to attack.
   Use a long random `auth.signingSecret` — at least 32 bytes; a shorter one is brute-forceable and
-  the service warns at startup.
+  the service warns at startup. Set `auth.audience` to this deployment's own name as well:
+  `--mint-token` stamps it and the verifier requires it, so an instance that happens to share the
+  secret (staging, a demo) cannot mint tokens this one accepts. Re-mint existing tokens when you
+  set it - a token with no `aud` is rejected from then on.
 - **`idp`** — RS256 against an identity provider's JWKS, discovered from `auth.jwksUrl` or by OIDC
   discovery from `auth.issuer`. Keys are cached by `kid` and re-fetched on rotation. `--mint-token`
   refuses under `idp`, because the provider issues tokens.

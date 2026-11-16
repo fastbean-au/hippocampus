@@ -38,6 +38,12 @@ type MintRequest struct {
 	// and is why auth.requireGroupScope exists for deployments that want the omission caught.
 	Groups []string
 
+	// Audience, when non-empty, is stamped into the token's aud claim. A verifier configured with
+	// an audience accepts only tokens carrying it, so two deployments that share a signing secret
+	// do not accept each other's tokens. Empty mints a token with no aud, which only a verifier
+	// with no audience accepts.
+	Audience string
+
 	// TTL is how long the token stays valid from the moment it is minted.
 	TTL time.Duration
 }
@@ -69,6 +75,10 @@ func MintToken(req MintRequest) (string, error) {
 		ClientID: req.ClientID,
 		Roles:    req.Roles,
 		Groups:   req.Groups,
+	}
+
+	if req.Audience != "" {
+		claims.Audience = jwt.ClaimStrings{req.Audience}
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

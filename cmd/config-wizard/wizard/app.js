@@ -919,8 +919,8 @@ const STEPS = [
             label: "Audience",
             type: "text",
             def: "",
-            when: (s) => value(s, "auth.method") === "idp",
-            help: "Enforced against aud when set. Auth0 needs the API identifier here to mint a verifiable JWT; Keycloak does not.",
+            when: (s) => ["hmac", "idp"].includes(value(s, "auth.method")),
+            help: "Enforced against aud when set. Under hmac, --mint-token stamps it, so instances that share a secret do not accept each other's tokens. Under idp, Auth0 needs the API identifier here to mint a verifiable JWT; Keycloak does not.",
           },
           {
             key: "auth.jwksRefreshIntervalSeconds",

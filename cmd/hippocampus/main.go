@@ -137,7 +137,9 @@ func execute(args []string) {
 			log.Fatal("--mint-token is not available with auth.method 'idp' - the identity provider issues tokens")
 		}
 
-		secret, kid := resolveMintKey(hmacConfigFromViper())
+		hmacCfg := hmacConfigFromViper()
+
+		secret, kid := resolveMintKey(hmacCfg)
 
 		roles := viper.GetStringSlice("role")
 
@@ -159,6 +161,7 @@ func execute(args []string) {
 			ClientID: viper.GetString("client-id"),
 			Roles:    roles,
 			Groups:   groups,
+			Audience: hmacCfg.Audience,
 			TTL:      viper.GetDuration("ttl"),
 		})
 		if err != nil {

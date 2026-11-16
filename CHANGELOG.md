@@ -75,6 +75,10 @@ itself which service version it was built against.
   the fallback, and the new `auth.clientIdClaim` names another claim (Okta `cid`, Entra ID `appid`).
   An entry already in the file starts matching. Those tokens also gain a `client_id` in the request
   log and are rate limited per client. See [Revocation](docs/configuration.md#revocation).
+- **`hmac` tokens can carry an audience.** With `auth.audience` set under `hmac`, `--mint-token`
+  stamps it into `aud` and the verifier requires it, so deployments that share a signing secret no
+  longer accept each other's tokens. Unset (the default), nothing changes. Setting it rejects every
+  token minted without it, so re-mint them. See [Authentication](docs/configuration.md#authentication).
 
 ## [0.53.4] - 2026-11-13
 

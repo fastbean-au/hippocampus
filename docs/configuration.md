@@ -1033,7 +1033,11 @@ token. `auth.method` selects the scheme:
   form; `auth.signingKeys` holds several `kid`-identified secrets at once so one can be rotated in
   while tokens signed by another still verify (see [Key rotation](#key-rotation-hmac)), and
   `auth.revocationFile` cuts off individual tokens or clients without waiting out their TTL (see
-  [Revocation](#revocation)).
+  [Revocation](#revocation)). Set `auth.audience` too if a secret could ever be shared between
+  deployments (staging and production, or a demo and a real instance): `--mint-token` stamps it
+  into the token's `aud`, and the verifier then rejects any token that does not carry it,
+  including one minted before it was set. Without it, every instance holding the secret accepts
+  every token it signed.
 - `idp` — tokens are issued by an external identity provider and verified as RS256 against the
   provider's published JWKS. `auth.jwksUrl` names the key-set endpoint directly, or `auth.issuer`
   alone resolves it via OIDC discovery (`<issuer>/.well-known/openid-configuration`). When

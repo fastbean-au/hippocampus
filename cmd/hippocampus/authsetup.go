@@ -102,7 +102,7 @@ func topologyTierOverride() map[string]string {
 // hmacConfigFromViper reads the HMAC signing configuration into an auth.HMACConfig. Centralising the
 // viper access here (per the project convention that all viper reads live in cmd/hippocampus) means the
 // --mint-token CLI and the running verifier share one interpretation of signingSecret, signingKeys,
-// and activeKid.
+// activeKid and audience: --mint-token stamps the audience the verifier then requires.
 func hmacConfigFromViper() auth.HMACConfig {
 	var keys []auth.SigningKey
 
@@ -114,6 +114,7 @@ func hmacConfigFromViper() auth.HMACConfig {
 		LegacySecret: viper.GetString("auth.signingSecret"),
 		Keys:         keys,
 		ActiveKid:    viper.GetString("auth.activeKid"),
+		Audience:     viper.GetString("auth.audience"),
 	}
 }
 

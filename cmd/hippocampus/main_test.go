@@ -688,14 +688,15 @@ func TestConfigureEnvOverrides_EnvBeatsFile(t *testing.T) {
 	}
 }
 
-// TestHmacConfigFromViper verifies the config's signing secret, keyed rotation keys, and active kid
-// are all read into the auth.HMACConfig the running verifier and --mint-token share.
+// TestHmacConfigFromViper verifies the config's signing secret, keyed rotation keys, active kid and
+// audience are all read into the auth.HMACConfig the running verifier and --mint-token share.
 func TestHmacConfigFromViper(t *testing.T) {
 	viper.Reset()
 	defer viper.Reset()
 
 	viper.Set("auth.signingSecret", "legacy-secret")
 	viper.Set("auth.activeKid", "k2")
+	viper.Set("auth.audience", "production")
 	viper.Set("auth.signingKeys", []map[string]string{
 		{"kid": "k1", "secret": "secret-one"},
 		{"kid": "k2", "secret": "secret-two"},
@@ -709,6 +710,10 @@ func TestHmacConfigFromViper(t *testing.T) {
 
 	if got.ActiveKid != "k2" {
 		t.Errorf("ActiveKid = %q, want %q", got.ActiveKid, "k2")
+	}
+
+	if got.Audience != "production" {
+		t.Errorf("Audience = %q, want %q", got.Audience, "production")
 	}
 
 	want := []auth.SigningKey{{Kid: "k1", Secret: "secret-one"}, {Kid: "k2", Secret: "secret-two"}}
@@ -731,7 +736,7 @@ func TestHmacConfigFromViper_Empty(t *testing.T) {
 
 	got := hmacConfigFromViper()
 
-	if got.LegacySecret != "" || got.ActiveKid != "" || len(got.Keys) != 0 {
+	if got.LegacySecret != "" || got.ActiveKid != "" || got.Audience != "" || len(got.Keys) != 0 {
 		t.Errorf("expected a zero-value HMACConfig, got %+v", got)
 	}
 }

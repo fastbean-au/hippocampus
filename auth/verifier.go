@@ -36,6 +36,11 @@ type HMACConfig struct {
 	// ActiveKid names the key in Keys used for minting. It is validated (must name a real key) but
 	// not otherwise consumed by the verifier - the caller reads it to decide which key to mint with.
 	ActiveKid string
+
+	// Audience, when non-empty, is required in every token's aud claim, so instances that share a
+	// signing secret (staging and production, or the demo and a real instance) do not accept each
+	// other's tokens. Empty checks no audience, which keeps tokens minted before it was set working.
+	Audience string
 }
 
 // HMACVerifier verifies tokens signed with one or more shared HS256 secrets. Tokens carrying a kid
@@ -44,6 +49,7 @@ type HMACConfig struct {
 type HMACVerifier struct {
 	legacySecret []byte
 	keys         map[string][]byte
+	options      []jwt.ParserOption
 }
 
 // minHMACSecretBytes is the shortest secret NewHMACVerifier accepts without warning. HS256 keys
@@ -65,7 +71,12 @@ func NewHMACVerifier(cfg HMACConfig) (*HMACVerifier, error) {
 	}
 
 	v := &HMACVerifier{
-		keys: make(map[string][]byte, len(cfg.Keys)),
+		keys:    make(map[string][]byte, len(cfg.Keys)),
+		options: []jwt.ParserOption{jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired()},
+	}
+
+	if cfg.Audience != "" {
+		v.options = append(v.options, jwt.WithAudience(cfg.Audience))
 	}
 
 	if cfg.LegacySecret != "" {
@@ -116,6 +127,8 @@ func warnIfShortSecret(label string, secret string) {
 // the legacy secret when there is none); an unknown kid is rejected. An exp claim is required
 // (jwt.WithExpirationRequired) so a token minted without an expiry - e.g. directly with a leaked
 // signing secret - cannot verify forever; golang-jwt otherwise only validates exp when present.
+// A configured audience is required in the aud claim (jwt.WithAudience), so a token minted for
+// another instance sharing the secret, or with no audience at all, is rejected.
 // The specific parsing failure is logged for operator debugging but not returned to the caller, so
 // a rejected request doesn't leak internal token parsing details.
 func (v *HMACVerifier) Verify(token string) (*Claims, error) {
@@ -123,7 +136,7 @@ func (v *HMACVerifier) Verify(token string) (*Claims, error) {
 
 	var claims Claims
 
-	parsed, err := jwt.ParseWithClaims(token, &claims, v.keyForToken, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
+	parsed, err := jwt.ParseWithClaims(token, &claims, v.keyForToken, v.options...)
 	if err != nil {
 		log.Debugf("token rejected: %s", err.Error())
 
