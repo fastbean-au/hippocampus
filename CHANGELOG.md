@@ -63,6 +63,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-11-16
+
 ### Added
 
 - **`Watch` streams the store's changes over gRPC.** Memories stored, updated and forgotten, events
@@ -4284,7 +4286,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.53.4...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.54.0...HEAD
+[0.54.0]: https://github.com/fastbean-au/hippocampus/compare/v0.53.4...v0.54.0
 [0.53.4]: https://github.com/fastbean-au/hippocampus/compare/v0.53.3...v0.53.4
 [0.53.3]: https://github.com/fastbean-au/hippocampus/compare/v0.53.2...v0.53.3
 [0.53.2]: https://github.com/fastbean-au/hippocampus/compare/v0.53.1...v0.53.2
