@@ -29,11 +29,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./grpc": {
       "types": "./dist/grpc.d.ts",
-      "import": "./dist/grpc.js"
+      "import": "./dist/grpc.js",
+      "default": "./dist/grpc.js"
     }
   },
   "files": [

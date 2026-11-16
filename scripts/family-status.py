@@ -99,17 +99,16 @@ REPOS = [
 # repositories on their OWN version line need this: for the two whose line follows the service's,
 # releasing is mechanical and any commit is worth carrying, and they tag themselves anyway.
 #
-# WHY IT MATTERS. `hippocampus-obsidian` receives a re-vendored contract on every service release,
-# and vendoring it changes nothing a user runs: `main.js` is built from `src/` at release time, and
-# the contract document is read by the conformance suite, not by the plugin. Reported as work
-# awaiting a release it becomes a permanently red line, and a report that is always red is one that
-# stops being read - which is the failure this whole check exists to avoid, arriving by the other
-# door.
+# WHY IT MATTERS. `hippocampus-obsidian`'s `main` collects commits that change nothing a user runs -
+# test and workflow edits, `contract/SERVICE_VERSION` - since `main.js` is built from `src/` at
+# release time. Reported as work awaiting a release they would make a permanently red line, and a
+# report that is always red is one that stops being read - which is the failure this whole check
+# exists to avoid, arriving by the other door.
 #
-# `package.json` is deliberately ABSENT, and that is the one entry worth re-examining if this list
-# is ever edited: the plugin declares no runtime `dependencies`, so esbuild bundles nothing from it
-# and a dependency bump there is build tooling. The moment a runtime dependency appears that stops
-# being true, so `ships_nothing` asks that question of the file rather than assuming the answer.
+# `package.json` is deliberately ABSENT from the list, and `ships_nothing` asks the file instead:
+# a change there ships only if it touches a runtime `dependency`, which esbuild bundles. Since item
+# 196 the plugin has one - `hippocampus-client`, raised by every service release's bump - so a
+# merged bump IS work awaiting a plugin release, as it should be: it changes `main.js`.
 SHIPS = {
     "hippocampus-obsidian": ("src/", "styles.css", "manifest.json"),
 }
@@ -139,7 +138,7 @@ SURFACE = {
     "hippocampus-llamaindex": ("contract/hippocampus.proto", "integrations/python/"),
     "hippocampus-langgraph": ("contract/hippocampus.proto", "integrations/python/"),
     "hippocampus-otel-collector": ("contract/", "types/"),
-    "hippocampus-obsidian": ("contract/hippocampus.swagger.json",),
+    "hippocampus-obsidian": ("contract/hippocampus.proto", "integrations/typescript/"),
     "hippocampus-gen": ("contract/",),
 }
 

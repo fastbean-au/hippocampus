@@ -522,6 +522,11 @@ jobs:
 
           node --input-type=module -e 'import { createHippocampusClient, createGatewayTransport } from "hippocampus-client"; import { createHippocampusGrpcTransport } from "hippocampus-client/grpc"; createHippocampusClient(createGatewayTransport({ baseUrl: "http://localhost:8080" }))'
 
+          # And from CommonJS, which is how a consumer bundling to cjs or a test runner loading
+          # TypeScript as cjs reaches it (the Obsidian plugin is both). An exports map with only an
+          # `import` condition resolves for ESM and fails here, which is the bug this line found.
+          node -e 'require("hippocampus-client"); require("hippocampus-client/grpc")'
+
       - name: Check whether publishing is enabled
         id: gate
         run: |
@@ -825,8 +830,9 @@ jobs:
   # that tracked the contract with nothing to raise it. What each receiver re-pins differs, so the
   # payload is just the tag and each one decides:
   #
-  #   hippocampus-obsidian        re-vendors contract/hippocampus.swagger.json (and its stated
-  #                               minimum service version) and runs its conformance suite
+  #   hippocampus-obsidian        raises its hippocampus-client dependency to the tarball
+  #                               publish-typescript attaches (and its stated minimum service
+  #                               version), then builds and tests against it
   #   hippocampus-otel-collector  raises `require github.com/fastbean-au/hippocampus` and tidies
   #   hippocampus-llamaindex      raises the hippocampus-client release wheel its tests install
   #   hippocampus-langgraph       the same, and its live suite runs against that release's image
@@ -861,12 +867,13 @@ jobs:
   # that upload landed, so the bump died with "v0.47.1 has no
   # hippocampus_client-0.47.1-py3-none-any.whl attached". The others read the tag itself
   # (raw.githubusercontent for the contract, `go get @tag` for the module), which the release job
-  # already guarantees. And on publish, because
+  # already guarantees. On publish-typescript, because hippocampus-obsidian pins the client TARBALL
+  # that job attaches, which is the same race with a different file. And on publish, because
   # hippocampus-langgraph's live suite runs against this release's IMAGE: told before the push
   # lands, its bump pull request's CI would pull a tag that does not exist yet and go red for a
   # reason that is not the store's.
   notify-satellites:
-    needs: [release, publish-python, publish]
+    needs: [release, publish-python, publish-typescript, publish]
     runs-on: ubuntu-latest
 
     permissions:

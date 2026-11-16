@@ -33,10 +33,10 @@ rather than of the plugin:
   `deploy/compose/config.sqlite.json` demo uses `8080`; the root `config.json` ships with it
   disabled). It uses Obsidian's `requestUrl`, so it is not blocked by renderer CORS and needs no
   server-side changes.
-- Its wire handling is hand-written against the `/v1` gateway rather than generated from
-  `contract/hippocampus.proto`, so it holds itself to a vendored copy of
-  `contract/hippocampus.swagger.json` and declares a minimum service version. A contract change that
-  moves a route or drops a field turns that repository's CI red, not this one's.
+- Its wire is [the TypeScript client](typescript.md), generated from `contract/hippocampus.proto`
+  and pinned to the tarball a service release attaches, with a `fetch` built over `requestUrl`. It
+  declares that release as its minimum service version. A contract change the plugin cannot build
+  against turns that repository's CI red, not this one's.
 
 ### Why the shape fits
 

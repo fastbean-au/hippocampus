@@ -154,8 +154,11 @@ annotations_pb2` into the generated module and no index publishes that package, 
   the OpenAPI document; `Watch`, having none, is refused with `Unimplemented`. It implements
   Connect's `Transport` interface, so the generated client is the same over either wire, interceptors
   included, and a gateway error comes back as a `ConnectError` with the service's gRPC code. The
-  host's `fetch` is an option, which is what lets the Obsidian plugin (which must use `requestUrl` to
-  escape the renderer's CORS policy) adopt it once it is published. (3) **Native gRPC is a separate
+  host's `fetch` is an option, which is what let the Obsidian plugin (which must use `requestUrl` to
+  escape the renderer's CORS policy) retire its hand-written client, routes and conformance suite
+  for it, pinned to the release tarball. Its exports carry a `default` condition beside `import`
+  because the plugin's tests load it as CommonJS; an `import`-only map failed there, and CI now
+  `require()`s the packed tarball. (3) **Native gRPC is a separate
   entry point** (`hippocampus-client/grpc`, over `@connectrpc/connect-node`, an optional peer
   dependency), so a browser bundle never pulls in `node:http2`. The four encodings the Python
   client's dataclasses absorb are helpers here instead (`src/encoding.ts`), so callers keep the

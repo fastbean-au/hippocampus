@@ -785,6 +785,11 @@ jobs:
 
           node --input-type=module -e 'import { createHippocampusClient, createGatewayTransport, VERSION } from "hippocampus-client"; import { createHippocampusGrpcTransport } from "hippocampus-client/grpc"; createHippocampusClient(createGatewayTransport({ baseUrl: "http://localhost:8080" })); console.log(VERSION)'
 
+          # And from CommonJS, which is how a consumer bundling to cjs or a test runner loading
+          # TypeScript as cjs reaches it (the Obsidian plugin is both). An exports map with only an
+          # `import` condition resolves for ESM and fails here, which is the bug this line found.
+          node -e 'require("hippocampus-client"); require("hippocampus-client/grpc")'
+
   # The embedded console is ~2,800 lines of JavaScript that no Go job can exercise. Its pure logic
   # lives in cmd/hippocampus/webui/lib.js — the capability matrix that decides which controls a
   # caller sees, the decay-curve geometry, the escaping, the age and metadata parsing — and this

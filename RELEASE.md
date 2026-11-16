@@ -344,11 +344,12 @@ while the work is in flight — that is what stands the contract gate down (see
    - the **`publish-objectstore-agents` job** — a matrix over `object-gateway` and `object-reaper`,
      through the one `COMMAND`-parameterised Dockerfile.
 
-7. **`notify-satellites` job** (gated on `release`, `publish-python` and `publish`) — fires a `repository_dispatch` carrying the tag
+7. **`notify-satellites` job** (gated on `release`, `publish-python`, `publish-typescript` and
+   `publish`) — fires a `repository_dispatch` carrying the tag
    at each of the five repositories that track this one, so each can re-pin what it tracks and open
    a pull request carrying the result of building against it. What each re-pins differs, so the
-   payload is only the tag: `hippocampus-obsidian` re-vendors the OpenAPI document and runs its
-   conformance suite, `hippocampus-otel-collector` raises its `require` and tidies,
+   payload is only the tag: `hippocampus-obsidian` raises its `hippocampus-client` dependency to the
+   tarball `publish-typescript` attaches and builds against it, `hippocampus-otel-collector` raises its `require` and tidies,
    `hippocampus-llamaindex` and `hippocampus-langgraph` raise the client wheel their tests install
    (the store also running its live suite against this release's image, which is why the job waits
    for `publish` too), and `hippocampus-gen` raises the same `require` the collector does. Authentication is the `SATELLITE_DISPATCH_TOKEN` PAT,
