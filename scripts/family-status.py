@@ -80,6 +80,7 @@ REPOS = [
     # name, pin path, pin kind, line, dispatched
     (HUB, None, None, "hub", False),
     ("hippocampus-llamaindex", "SERVICE_VERSION", "file", "service", True),
+    ("hippocampus-langgraph", "SERVICE_VERSION", "file", "service", True),
     ("hippocampus-otel-collector", "hippocampusexporter/go.mod", "gomod", "service", True),
     ("hippocampus-obsidian", "contract/SERVICE_VERSION", "file", "own", True),
     # Built from `main` as containers rather than from tags, so merging its bump IS its release -
@@ -136,6 +137,7 @@ SHIPS = {
 # matches nothing, and the satellite is never told again.
 SURFACE = {
     "hippocampus-llamaindex": ("contract/hippocampus.proto", "integrations/python/"),
+    "hippocampus-langgraph": ("contract/hippocampus.proto", "integrations/python/"),
     "hippocampus-otel-collector": ("contract/", "types/"),
     "hippocampus-obsidian": ("contract/hippocampus.swagger.json",),
     "hippocampus-gen": ("contract/",),

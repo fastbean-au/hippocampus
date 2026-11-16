@@ -1,16 +1,24 @@
 # Clients in other languages
 
-Two languages need no generation. Go stubs ship in the repository (`contract/`), so a Go program
-imports `contract.NewHippocampusClient` and is done, and **Python has a client package**, not yet
-on PyPI, so installed from the service's tag:
+Three languages need no generation. Go stubs ship in the repository (`contract/`), so a Go program
+imports `contract.NewHippocampusClient` and is done; **Python has a client package**, not yet on
+PyPI, so installed from the service's tag:
 
 ```sh
 pip install "hippocampus-client @ git+https://github.com/fastbean-au/hippocampus@vX.Y.Z#subdirectory=integrations/python"
 ```
 
-See [The Python client](python.md) — it covers the full RPC surface, is built from the same tag the
-contract is, and removes the encoding traps described [below](#json-encoding-notes) rather than
-leaving each caller to meet them. Nothing is published to npm, Maven or NuGet.
+and **TypeScript/JavaScript has one too**, not yet on npm, so installed from the tarball every
+release attaches:
+
+```sh
+npm install https://github.com/fastbean-au/hippocampus/releases/download/vX.Y.Z/hippocampus-client-X.Y.Z.tgz
+```
+
+See [The Python client](python.md) and [The TypeScript client](typescript.md). Each covers the full
+RPC surface, is built from the same tag the contract is, and removes the encoding traps described
+[below](#json-encoding-notes) rather than leaving each caller to meet them. Nothing is published to
+Maven or NuGet.
 
 **Every other language generates its own client.** This page is that recipe: how to turn the
 contract into a working client in a few minutes, and the handful of things about Hippocampus's API
@@ -168,41 +176,11 @@ found = stub.SearchMemories(pb.SearchMemoriesRequest(query="deploy", limit=5))
 
 ### Node.js and TypeScript
 
-`@grpc/proto-loader` reads the `.proto` at startup, so there is **no code generation step at all**:
-
-```sh
-npm install @grpc/grpc-js @grpc/proto-loader
-```
-
-```js
-import * as grpc from "@grpc/grpc-js";
-import * as protoLoader from "@grpc/proto-loader";
-
-const def = protoLoader.loadSync("hippocampus.proto", {
-  includeDirs: ["path/to/hippocampus/contract"],
-  longs: String, // int64 timestamps do not fit in a JS number
-  enums: String,
-  defaults: true,
-});
-const { Hippocampus } = grpc.loadPackageDefinition(def).hippocampus.v1;
-const client = new Hippocampus(
-  "localhost:50051",
-  grpc.credentials.createInsecure(),
-);
-
-const call = (method, req) =>
-  new Promise((res, rej) =>
-    client[method](req, (e, r) => (e ? rej(e) : res(r))),
-  );
-
-console.log(await call("WhoAmI", {}));
-const stored = await call("StoreMemory", { significance: 50, body: "hello" });
-const listed = await call("GetMemories", { limit: 10 });
-```
-
-For static TypeScript types instead, generate them with `buf` (Recipe 1) using
-`buf.build/community/stephenh-ts-proto`, or take the types from the OpenAPI document
-([below](#typed-clients-from-the-openapi-document)).
+Use [the TypeScript client](typescript.md) rather than generating one: it is this recipe already
+done, with a gateway transport for hosts that cannot speak HTTP/2 and the encoding helpers. To
+generate your own anyway, `buf` (Recipe 1) with `buf.build/bufbuild/es` is what that package uses;
+`@grpc/proto-loader` reads the `.proto` at startup with no generation step at all, at the cost of
+static types.
 
 ### Other languages
 

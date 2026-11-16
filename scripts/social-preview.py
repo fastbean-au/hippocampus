@@ -72,6 +72,10 @@ CARDS = {
         "Fills an instance with realistic events and memories, so a decay cycle has "
         "something to decide about.",
     ),
+    "hippocampus-langgraph": (
+        "LangGraph store",
+        "A LangGraph long-term memory store backed by Hippocampus.",
+    ),
     "hippocampus-llamaindex": (
         "LlamaIndex memory",
         "A LlamaIndex long-term memory block backed by Hippocampus.",

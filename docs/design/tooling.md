@@ -185,8 +185,8 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   relying on the refusal instead would make `--dry-run` overstate what it is about to delete. It
   never touches `~/.hippocampus` (a personal instance's real store) or the Go module cache
 - Administer the **family of repositories** (the service plus `hippocampus-demo-site`,
-  `-gen`, `-llamaindex`, `-obsidian`, `-otel-collector` and `homebrew-tap`), all from this
-  repository because it is the hub the other six are satellites of. Four scripts — the first three
+  `-gen`, `-langgraph`, `-llamaindex`, `-obsidian`, `-otel-collector` and `homebrew-tap`), all from
+  this repository because it is the hub the other seven are satellites of. Four scripts — the first three
   idempotent and each taking `--dry-run`, the fourth read-only:
   - `scripts/apply-rulesets.sh` — the `protect-main` branch ruleset on every repository: `deletion`
     and `non_fast_forward`, no bypass actors, targeting `~DEFAULT_BRANCH`. **What it leaves out is
@@ -222,8 +222,8 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
     permanently red — and a report that is always red stops being read, which is the same failure by
     the other door. Only a complete comparison can prove nothing shipped, so a truncated file list,
     an empty one, or a `package.json` whose runtime `dependencies` are bundled into the release all
-    report rather than go quiet. `hippocampus-llamaindex` and `hippocampus-otel-collector` now tag
-    themselves from the pin when a bump lands (`release-on-bump` in each, dispatching their own
+    report rather than go quiet. `hippocampus-llamaindex`, `hippocampus-langgraph` and
+    `hippocampus-otel-collector` now tag themselves from the pin when a bump lands (`release-on-bump` in each, dispatching their own
     `Release` because a `GITHUB_TOKEN`-created tag triggers no `push: tags:` event);
     `hippocampus-obsidian` is deliberately manual, its tag being a user-facing plugin version.
     (4) A pin is stale only when something the satellite **consumes** moved — its `SURFACE` entry,

@@ -37,7 +37,8 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
 - Integration modules, each tested from its own directory: `integrations/cli` (`hippo`),
   `integrations/mcp`, `integrations/eventsource` (`cmd/<broker>`), `integrations/ingestor`,
   `integrations/objectstore`. Python client: `cd integrations/python && pip install -e '.[dev]' &&
-  python -m pytest`.
+  python -m pytest`. TypeScript client: `cd integrations/typescript && npm ci && npm test` (set
+  `HIPPOCAMPUS_GATEWAY_URL`/`HIPPOCAMPUS_GRPC_URL` for its live suite).
 - Server dialects: `HIPPOCAMPUS_TEST_DIALECT=postgres go test ./db ./hippocampus` (or `mysql`), with
   `HIPPOCAMPUS_TEST_POSTGRES_DSN`, or `HIPPOCAMPUS_TEST_MYSQL_DSN` plus
   `HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN`. Run it after any change under `db/`.
@@ -83,7 +84,7 @@ The long form of every command, with its design notes, is [docs/design/tooling.m
 | `observability/` | OTEL bootstrap, the Prometheus reader, `/healthz`/`/readyz`, client RED metrics | [observability](docs/design/observability.md) |
 | `dial/` | the one client connection every integration uses (token, OIDC, TLS) | [integrations](docs/design/integrations.md) |
 | `internal/flagdocs/` | test helper holding integration flags to their doc pages | - |
-| `integrations/` | CLI, MCP bridge, Python client, broker bridges, ingestor, object-storage agents; separate modules | [integrations](docs/design/integrations.md) |
+| `integrations/` | CLI, MCP bridge, Python and TypeScript clients, broker bridges, ingestor, object-storage agents; separate modules | [integrations](docs/design/integrations.md) |
 | `demo/`, `examples/` | the load generator and soak stack; runnable client examples | [tooling](docs/design/tooling.md) |
 | `deploy/` | compose, k8s, systemd, launchd, alert rules | each directory's README |
 | `hooks/` | `pre-commit` | - |

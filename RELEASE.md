@@ -47,8 +47,8 @@ pre-flight plus the one command that starts all of that.
   (**github.com/settings/personal-access-tokens** for fine-grained, **/settings/tokens** for
   classic), not in the repository, and that page is where its repository list and its expiry are.
   - **The targets it must reach** are every repository in the job's dispatch loop:
-    `hippocampus-obsidian`, `hippocampus-otel-collector`, `hippocampus-llamaindex` and
-    `hippocampus-gen`. **Adding a dispatch target is therefore three edits, not one**: the loop in
+    `hippocampus-obsidian`, `hippocampus-otel-collector`, `hippocampus-llamaindex`,
+    `hippocampus-langgraph` and `hippocampus-gen`. **Adding a dispatch target is therefore three edits, not one**: the loop in
     `release.yaml`, the table in [`scripts/family-status.py`](scripts/family-status.py) — which
     [`family_test.go`](cmd/hippocampus/family_test.go) will fail the build over if you forget — and
     this token's repository list, which nothing can check for you. `hippocampus-gen` was added in
@@ -81,6 +81,14 @@ pre-flight plus the one command that starts all of that.
   variables are always present, so the job would simply fail at the upload. With it unset the job
   still stamps the version, builds both distributions, verifies the wheel imports, and attaches them
   to the GitHub release; only the upload is skipped.
+- **`PUBLISH_NPM` repository variable** — the same gate for the `publish-typescript` job and the
+  `hippocampus-client` npm package, also trusted publishing (npm 11.5+), so again no token to store.
+  One difference: npm attaches a trusted publisher to a package that already exists, so the **first**
+  publish is by hand, from the tarball that release attached (`npm publish
+  hippocampus-client-X.Y.Z.tgz --access public`). Then add the publisher on npmjs.com (repository
+  `fastbean-au/hippocampus`, workflow `release.yaml`, no environment) and set the variable. Unset,
+  the job still stamps, builds, tests, packs, installs the tarball into a clean project and attaches
+  it to the GitHub release.
 - **Git hooks** — point git at the tracked hooks once per clone: `git config core.hooksPath hooks`.
 - GHCR publishing needs no secret: the workflow authenticates with the built-in `GITHUB_TOKEN`.
 
@@ -320,6 +328,13 @@ while the work is in flight — that is what stands the contract gate down (see
    and passes every test in the suite, because the tests run against the source tree. The upload is
    gated on the `PUBLISH_PYPI` variable above; the distributions are attached to the GitHub release
    either way.
+
+   The **`publish-typescript` job** (also gated on `release`) does the same for the npm package: the
+   tag is stamped into `integrations/typescript/package.json` and `src/version.ts` and both are read
+   back, the client is generated, built and tested, and **the packed tarball is installed into an
+   empty project and both entry points imported** before anything is uploaded — its generated code
+   is gitignored, so a tarball packed from an unbuilt tree is the one failure it can ship. Gated on
+   `PUBLISH_NPM`; the tarball is attached to the GitHub release either way.
 6. **The remaining image jobs**, each gated on `release` and each publishing to GHCR with the same
    three tags as job 3:
 
@@ -329,13 +344,14 @@ while the work is in flight — that is what stands the contract gate down (see
    - the **`publish-objectstore-agents` job** — a matrix over `object-gateway` and `object-reaper`,
      through the one `COMMAND`-parameterised Dockerfile.
 
-7. **`notify-satellites` job** (gated on `release`) — fires a `repository_dispatch` carrying the tag
-   at each of the four repositories that track this one, so each can re-pin what it tracks and open
+7. **`notify-satellites` job** (gated on `release`, `publish-python` and `publish`) — fires a `repository_dispatch` carrying the tag
+   at each of the five repositories that track this one, so each can re-pin what it tracks and open
    a pull request carrying the result of building against it. What each re-pins differs, so the
    payload is only the tag: `hippocampus-obsidian` re-vendors the OpenAPI document and runs its
    conformance suite, `hippocampus-otel-collector` raises its `require` and tidies,
-   `hippocampus-llamaindex` raises the client wheel its tests install, and `hippocampus-gen` raises
-   the same `require` the collector does. Authentication is the `SATELLITE_DISPATCH_TOKEN` PAT,
+   `hippocampus-llamaindex` and `hippocampus-langgraph` raise the client wheel their tests install
+   (the store also running its live suite against this release's image, which is why the job waits
+   for `publish` too), and `hippocampus-gen` raises the same `require` the collector does. Authentication is the `SATELLITE_DISPATCH_TOKEN` PAT,
    because the built-in `GITHUB_TOKEN` is scoped to this repository and cannot dispatch to another;
    without the secret the job logs a notice and skips. A dispatch that fails turns the job **red**
    once every satellite has been tried, naming each one that was not told. That does not undo the
@@ -347,7 +363,8 @@ while the work is in flight — that is what stands the contract gate down (see
    **Only a satellite whose consumed surface moved is told.** Each satellite's entry in
    `scripts/family-status.py`'s `SURFACE` table names the paths it builds against (the OpenAPI
    document for the plugin, `contract/` and `types/` for the collector, `contract/` for the
-   generators, the proto plus `integrations/python/` for the LlamaIndex adapter), and the job asks
+   generators, the proto plus `integrations/python/` for the LlamaIndex and LangGraph adapters), and
+   the job asks
    `--dispatch-targets` which of them changed between the pin on each satellite's `main` and this
    tag. So a release changing none of them — most patches — re-pins nothing, and in particular does
    not raise the plugin's declared minimum service version for no reason; a patch that _does_ touch
@@ -360,8 +377,9 @@ while the work is in flight — that is what stands the contract gate down (see
    makes its bump the only build the new pin gets — there is no CI workflow in that repository — so
    a red one there matters more than elsewhere, not less.
 
-   **What happens after that dispatch is the satellite's own business, and for two of them it is
-   now automatic.** `hippocampus-llamaindex` and `hippocampus-otel-collector` each carry a
+   **What happens after that dispatch is the satellite's own business, and for three of them it is
+   now automatic.** `hippocampus-llamaindex`, `hippocampus-langgraph` and
+   `hippocampus-otel-collector` each carry a
    `release-on-bump` workflow: when a raised pin lands on `main` it re-runs that repository's tests,
    derives the tag **from the pin**, tags it, and dispatches its own `Release`. That derivation is
    the point rather than the convenience — both declare that their version line continues this
@@ -374,7 +392,7 @@ while the work is in flight — that is what stands the contract gate down (see
    (A tag created with the built-in `GITHUB_TOKEN` does not trigger `on: push: tags:`, which is why
    those workflows dispatch `Release` explicitly rather than relying on the tag push.)
 
-The release therefore runs **nine** jobs, and this section described five of them until 2026-09-12 —
+The release therefore runs **ten** jobs, and this section described five of them until 2026-09-12 —
 `publish-llamaindex`, `publish-ingestor` and `publish-objectstore-agents` were absent outright, and
 two others were named in a trailing clause that also called five brokers four. That is the drift
 step 7 of the pre-flight exists to ask about, pointed at this file rather than at the site: a module

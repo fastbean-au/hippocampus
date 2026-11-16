@@ -47,36 +47,40 @@ The load generator and the compressed-clock demo stack are in [`demo/`](../demo/
 
 ## Talking to it
 
-| Guide                               | What it answers                                                                         |
-| :---------------------------------- | :-------------------------------------------------------------------------------------- |
-| **[API reference](api.md)**         | Every RPC's JSON/HTTP route, and the filter, sorting and metadata semantics.            |
-| **[CLI (`hippo`)](cli.md)**         | Drive a running service from the shell, over gRPC or the JSON gateway.                  |
-| **[Python client](python.md)**      | The Python client, covering the full RPC surface; installed from a release tag for now. |
-| **[Clients & codegen](clients.md)** | Generate a TypeScript, Java, Rust or any-language client from the proto or OpenAPI doc. |
-| **[MCP server](mcp.md)**            | Give an LLM host memory tools via the Model Context Protocol.                           |
+| Guide                                  | What it answers                                                                                 |
+| :------------------------------------- | :---------------------------------------------------------------------------------------------- |
+| **[API reference](api.md)**            | Every RPC's JSON/HTTP route, and the filter, sorting and metadata semantics.                    |
+| **[CLI (`hippo`)](cli.md)**            | Drive a running service from the shell, over gRPC or the JSON gateway.                          |
+| **[Python client](python.md)**         | The Python client, covering the full RPC surface; installed from a release tag for now.         |
+| **[TypeScript client](typescript.md)** | The TypeScript client, over gRPC or the JSON gateway; installed from a release tarball for now. |
+| **[Clients & codegen](clients.md)**    | Generate a Java, Rust or any-language client from the proto or OpenAPI doc.                     |
+| **[MCP server](mcp.md)**               | Give an LLM host memory tools via the Model Context Protocol.                                   |
 
 ## Feeding it
 
-| Guide                                | What it answers                                                                           |
-| :----------------------------------- | :---------------------------------------------------------------------------------------- |
-| **[Event sourcing](eventsource.md)** | Bridge NATS, MQTT, RabbitMQ, Kafka or the Bluesky firehose in, one memory per message.    |
-| **[Ingestor](ingestor.md)**          | Stage data at the edge and promote completed events into a central store under CEL rules. |
-| **[LlamaIndex](llamaindex.md)**      | An agent's memory, reinforced by use (`llama-index-memory-hippocampus`; not on PyPI yet). |
-| **[Obsidian](obsidian.md)**          | Use the store as a memory layer for a note vault, via the plugin or the MCP bridge.       |
-| **[Object storage](objectstore.md)** | Govern a bucket you do not hold: reinforce on read, delete on forget.                     |
+| Guide                                | What it answers                                                                              |
+| :----------------------------------- | :------------------------------------------------------------------------------------------- |
+| **[Event sourcing](eventsource.md)** | Bridge NATS, MQTT, RabbitMQ, Kafka or the Bluesky firehose in, one memory per message.       |
+| **[Ingestor](ingestor.md)**          | Stage data at the edge and promote completed events into a central store under CEL rules.    |
+| **[LangGraph](langgraph.md)**        | A LangGraph `BaseStore`, reinforced by use (`langgraph-store-hippocampus`; not on PyPI yet). |
+| **[LlamaIndex](llamaindex.md)**      | An agent's memory, reinforced by use (`llama-index-memory-hippocampus`; not on PyPI yet).    |
+| **[Obsidian](obsidian.md)**          | Use the store as a memory layer for a note vault, via the plugin or the MCP bridge.          |
+| **[Object storage](objectstore.md)** | Govern a bucket you do not hold: reinforce on read, delete on forget.                        |
 
 Each integration in this repository is a self-contained subproject with its own README:
 [`integrations/cli`](../integrations/cli/README.md),
 [`integrations/mcp`](../integrations/mcp/README.md),
 [`integrations/python`](../integrations/python/README.md),
+[`integrations/typescript`](../integrations/typescript/README.md),
 [`integrations/eventsource`](../integrations/eventsource/README.md),
 [`integrations/ingestor`](../integrations/ingestor/README.md), and
 [`integrations/objectstore`](../integrations/objectstore/README.md).
 
-Three more live in their own repositories, because each tracks a release train that is not this
+Four more live in their own repositories, because each tracks a release train that is not this
 one's — see the pages above, which say what they are and where they went:
 [hippocampus-obsidian](https://github.com/fastbean-au/hippocampus-obsidian),
-[hippocampus-llamaindex](https://github.com/fastbean-au/hippocampus-llamaindex), and
+[hippocampus-llamaindex](https://github.com/fastbean-au/hippocampus-llamaindex),
+[hippocampus-langgraph](https://github.com/fastbean-au/hippocampus-langgraph), and
 [hippocampus-otel-collector](https://github.com/fastbean-au/hippocampus-otel-collector).
 
 ## The project itself

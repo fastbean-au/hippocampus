@@ -428,6 +428,123 @@ jobs:
         run: |
           gh release upload "${RELEASE_TAG}" integrations/python/dist/* --clobber
 
+  # Publish the TypeScript client to npm, from the same tag, for the same reason publish-python does:
+  # its messages and service descriptor are generated from contract/hippocampus.proto during the
+  # build, so hippocampus-client@X.Y.Z is by construction the client of vX.Y.Z's contract, and a
+  # package published from any other commit would be a copy free to drift from it.
+  #
+  # Authentication is npm trusted publishing (OIDC, npm 11.5+), hence id-token and no token secret,
+  # and the upload is gated on the PUBLISH_NPM repository variable for the reason PUBLISH_PYPI gates
+  # PyPI's: nothing in the runner can tell whether the publisher has been configured on npm's side.
+  # With the variable unset the package is still stamped, built, tested, packed, installed into a
+  # clean project, and attached to the GitHub release - so `npm install <release tarball URL>` works
+  # before the registry does.
+  #
+  # To turn it on: on npmjs.com, add a trusted publisher to hippocampus-client (this repository,
+  # workflow release.yaml, no environment), then set PUBLISH_NPM to "true". The first publish of a
+  # name has no package to attach a publisher to, so that one is made by hand from the attached
+  # tarball (`npm publish hippocampus-client-X.Y.Z.tgz`) and every later one by this job.
+  publish-typescript:
+    needs: release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # attach the packed tarball to the GitHub release
+      id-token: write # npm trusted publishing, and the provenance statement
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      # Stamped in two places, because package.json is what npm publishes under and src/version.ts is
+      # what the client reports in its version header; both are read back, since a placeholder that
+      # survived would publish 0.0.0-dev - a version npm accepts and nobody can install as the
+      # release they asked for. BEFORE the tests, unlike the Python job's order: nothing here asserts
+      # the placeholder, and the tests are then run against the stamped build that ships.
+      - name: Stamp the release version
+        working-directory: integrations/typescript
+        run: |
+          set -euo pipefail
+
+          version="${RELEASE_TAG#v}"
+
+          if ! printf '%s' "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::release tag '${RELEASE_TAG}' is not a semver version - refusing to publish"
+            exit 1
+          fi
+
+          npm pkg set "version=${version}"
+          sed -i "s/^export const VERSION = \"0\.0\.0-dev\";$/export const VERSION = \"${version}\";/" src/version.ts
+
+          if [ "$(npm pkg get version | tr -d '"')" != "${version}" ] ||
+            ! grep -q "^export const VERSION = \"${version}\";$" src/version.ts; then
+            echo "::error::the version did not stamp into both package.json and src/version.ts"
+            exit 1
+          fi
+
+          echo "PACKAGE_VERSION=${version}" >> "${GITHUB_ENV}"
+
+      - name: Build and test
+        working-directory: integrations/typescript
+        run: |
+          npm ci
+          npm test
+
+      # The tarball is installed into an empty project and imported from there before anything is
+      # uploaded, because the failure this package can ship is a tarball with no generated code in
+      # it - src/gen is gitignored, and an `npm pack` from a tree that was never built packs an
+      # entry point importing files that are not there. Every test passes in that state.
+      - name: Pack, and import the tarball from a clean project
+        working-directory: integrations/typescript
+        run: |
+          set -euo pipefail
+
+          npm pack
+          tarball="$(pwd)/hippocampus-client-${PACKAGE_VERSION}.tgz"
+
+          mkdir /tmp/package-check
+          cd /tmp/package-check
+          npm init -y >/dev/null
+          npm install --silent "${tarball}" @connectrpc/connect-node
+
+          reported="$(node --input-type=module -e 'import { VERSION } from "hippocampus-client"; console.log(VERSION)')"
+
+          if [ "${reported}" != "${PACKAGE_VERSION}" ]; then
+            echo "::error::the packed client reports version '${reported}', expected '${PACKAGE_VERSION}'"
+            exit 1
+          fi
+
+          node --input-type=module -e 'import { createHippocampusClient, createGatewayTransport } from "hippocampus-client"; import { createHippocampusGrpcTransport } from "hippocampus-client/grpc"; createHippocampusClient(createGatewayTransport({ baseUrl: "http://localhost:8080" }))'
+
+      - name: Check whether publishing is enabled
+        id: gate
+        run: |
+          if [ "${{ vars.PUBLISH_NPM }}" = "true" ]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::PUBLISH_NPM is not set to true - built and verified the package, skipping the npm upload."
+          fi
+
+      - name: Publish to npm
+        if: steps.gate.outputs.enabled == 'true'
+        working-directory: integrations/typescript
+        run: |
+          npm install --global npm@11
+          npm publish "hippocampus-client-${PACKAGE_VERSION}.tgz" --provenance --access public
+
+      - name: Attach the tarball to the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${RELEASE_TAG}" "integrations/typescript/hippocampus-client-${PACKAGE_VERSION}.tgz" --clobber
+
   # Build and push the container image to GitHub Container Registry, gated behind the release job
   # so a failing test suite or coverage run publishes nothing. Auth is the built-in GITHUB_TOKEN
   # (no extra secrets); the image name is ghcr.io/<owner>/<repo>. The tag is passed as VERSION so
@@ -712,6 +829,7 @@ jobs:
   #                               minimum service version) and runs its conformance suite
   #   hippocampus-otel-collector  raises `require github.com/fastbean-au/hippocampus` and tidies
   #   hippocampus-llamaindex      raises the hippocampus-client release wheel its tests install
+  #   hippocampus-langgraph       the same, and its live suite runs against that release's image
   #   hippocampus-gen             raises the same `require`, and merging that is its whole release:
   #                               its images publish from main on push, so it has no tag to cut
   #
@@ -738,13 +856,17 @@ jobs:
   # costs a satellite built against a contract that moved.
   #
   # Gated on publish-python as well as release, because whatever a satellite re-pins to has to
-  # exist by the time it is told. hippocampus-llamaindex pins the release WHEEL, which publish-python
-  # attaches - and on v0.47.1 this job dispatched twenty seconds before that upload landed, so the
-  # bump died with "v0.47.1 has no hippocampus_client-0.47.1-py3-none-any.whl attached". The other
-  # two read the tag itself (raw.githubusercontent for the contract, `go get @tag` for the module),
-  # which the release job already guarantees, so this need covers the only satellite that has one.
+  # exist by the time it is told. hippocampus-llamaindex and hippocampus-langgraph pin the release
+  # WHEEL, which publish-python attaches - and on v0.47.1 this job dispatched twenty seconds before
+  # that upload landed, so the bump died with "v0.47.1 has no
+  # hippocampus_client-0.47.1-py3-none-any.whl attached". The others read the tag itself
+  # (raw.githubusercontent for the contract, `go get @tag` for the module), which the release job
+  # already guarantees. And on publish, because
+  # hippocampus-langgraph's live suite runs against this release's IMAGE: told before the push
+  # lands, its bump pull request's CI would pull a tag that does not exist yet and go red for a
+  # reason that is not the store's.
   notify-satellites:
-    needs: [release, publish-python]
+    needs: [release, publish-python, publish]
     runs-on: ubuntu-latest
 
     permissions:
@@ -776,7 +898,7 @@ jobs:
 
           failed=()
 
-          for repo in hippocampus-obsidian hippocampus-otel-collector hippocampus-llamaindex hippocampus-gen; do
+          for repo in hippocampus-obsidian hippocampus-otel-collector hippocampus-llamaindex hippocampus-langgraph hippocampus-gen; do
             if [ "${targets}" != "all" ] && ! printf '%s\n' "${targets}" | grep -qx "${repo}"; then
               echo "not telling ${repo}: nothing it consumes changed since the release it pins"
               continue

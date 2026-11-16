@@ -46,7 +46,8 @@ Summarisation condenses a pile of related-but-quiet memories into a single "gist
 dropping the detail outright.
 
 **Who it suits:** a team giving an agent or assistant memory that outlives a context window — over
-[MCP](mcp.md), the [Python client](python.md) or
+[MCP](mcp.md), the [Python](python.md) or [TypeScript](typescript.md) client,
+[LangGraph](https://github.com/fastbean-au/hippocampus-langgraph) or
 [LlamaIndex](https://github.com/fastbean-au/hippocampus-llamaindex) — where what the agent keeps
 coming back to is the best evidence of what matters.
 

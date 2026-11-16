@@ -2,6 +2,10 @@ module github.com/fastbean-au/hippocampus
 
 go 1.27.4
 
+// The TypeScript client's npm dependencies. Nothing there is Go today, but a package that ever
+// ships a .go file would otherwise be compiled, vetted and linted as part of this module.
+ignore ./integrations/typescript/node_modules
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/aws/aws-sdk-go-v2 v1.48.0

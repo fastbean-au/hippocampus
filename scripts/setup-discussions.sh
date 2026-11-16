@@ -31,6 +31,7 @@ REPOS=(
 	hippocampus
 	hippocampus-demo-site
 	hippocampus-gen
+	hippocampus-langgraph
 	hippocampus-llamaindex
 	hippocampus-obsidian
 	hippocampus-otel-collector
@@ -50,8 +51,8 @@ fi
 hub_body() {
 	cat <<'MD'
 This is the discussion space for **Hippocampus** and for every repository in its family — the
-service itself, the demo site, the generators, the Homebrew tap, and the LlamaIndex, Obsidian and
-OpenTelemetry adapters. The satellites have their own tabs for anything local to them, but anything
+service itself, the demo site, the generators, the Homebrew tap, and the LangGraph, LlamaIndex,
+Obsidian and OpenTelemetry adapters. The satellites have their own tabs for anything local to them, but anything
 about the service, its contract, its configuration or its behaviour is best asked here, where it is
 in front of everyone.
 

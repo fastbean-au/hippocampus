@@ -45,6 +45,7 @@ REPOS=(
 	hippocampus
 	hippocampus-demo-site
 	hippocampus-gen
+	hippocampus-langgraph
 	hippocampus-llamaindex
 	hippocampus-obsidian
 	hippocampus-otel-collector

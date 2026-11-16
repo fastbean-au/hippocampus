@@ -1,0 +1,13 @@
+version: v2
+inputs:
+  - directory: ../../contract
+    paths:
+      - ../../contract/hippocampus.proto
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    include_imports: true
+    opt:
+      - target=ts
+      - import_extension=js
+clean: true

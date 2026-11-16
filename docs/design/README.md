@@ -19,7 +19,7 @@ before changing it.
 | [Summarisation and embedding](llm.md) | `summarise/`, `embed/` |
 | [Export, import and transfer](archive.md) | `archive/`, the transfer RPCs |
 | [Authentication and authorisation](auth.md) | `auth/` |
-| [The integrations](integrations.md) | MCP, CLI, Python, broker bridges, ingestor, object-storage agents, `dial/` |
+| [The integrations](integrations.md) | MCP, CLI, Python, TypeScript, broker bridges, ingestor, object-storage agents, `dial/` |
 | [Observability](observability.md) | `observability/` |
 | [Conventions](conventions.md) | the conventions section as it stood |
 

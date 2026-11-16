@@ -70,6 +70,13 @@ itself which service version it was built against.
   `reader` tier. It is live and best-effort, with no cursor, and gRPC only. For clients that cannot
   run a webhook receiver. `hippo watch` and the Python client's `watch()` follow it. See
   [Watching for changes](docs/api.md#watching-for-changes).
+- **A TypeScript client, `hippocampus-client` for npm.** Generated from the contract, over the JSON
+  gateway (anywhere `fetch` exists) or native gRPC from Node, with one client type for both. Not on
+  npm yet: each release attaches the tarball. See [The TypeScript client](docs/typescript.md).
+- **A LangGraph store, `langgraph-store-hippocampus`.** A `BaseStore` in which a read that refreshes
+  an item recalls it, so the items an agent keeps reading are the ones that survive. It lives in
+  [hippocampus-langgraph](https://github.com/fastbean-au/hippocampus-langgraph); see
+  [LangGraph](docs/langgraph.md).
 
 ### Security
 

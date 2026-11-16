@@ -58,8 +58,8 @@ binary for every OS/arch onto the GitHub release and publishes the image to
 
 `integrations/` — self-contained client/edge subprojects, each a thin bridge rather than part of
 the core service. Each Go integration is a separate module whose dependency tree stays out of the
-root build (`mcp`, `cli`, `eventsource`, `ingestor`, `objectstore`), and one is a Python project
-(`python`).
+root build (`mcp`, `cli`, `eventsource`, `ingestor`, `objectstore`), one is a Python project
+(`python`), and one is an npm project (`typescript`).
 
 **Three subprojects now live in their own repositories** (TODO-2 item 113), because each tracked a
 release train that is not this one's: the Obsidian plugin
@@ -72,7 +72,14 @@ cadence). Each takes a **versioned** dependency on this module rather than a `re
 release workflow's `notify-satellites` job fires a `repository_dispatch` at each so it re-pins and
 reports whether it still builds. The rule is no longer "one release train, plus Obsidian": it is
 that a subproject stays here if it tracks **this** contract, and leaves if it tracks somebody
-else's train.
+else's train. **`hippocampus-langgraph`** (TODO-3 item 196) is the first satellite that never lived
+here: a LangGraph `BaseStore` tracks `langgraph-checkpoint`, so by that rule it started outside,
+built on the LlamaIndex adapter's machinery (a `SERVICE_VERSION` pin of the client release wheel,
+`contract-bump`, `release-on-bump`) plus one thing that adapter lacks - a live suite that runs
+against the pinned release's image, because three of the behaviours it depends on (a client-chosen
+id accepted, `ALREADY_EXISTS` in a batch result, metadata replaced wholesale on update) are the
+service's and a fake can only assert its own reading of them. The TypeScript client went the other
+way for the same reason: it is generated from this contract, so it tracks this train, and it stays.
 - `integrations/cli/` — the `hippo` command-line client (its own Go module, module path
   `github.com/fastbean-au/hippocampus/integrations/cli`; `replace
 github.com/fastbean-au/hippocampus => ../..`, so its client dependency tree stays out of the
@@ -134,6 +141,28 @@ annotations_pb2` into the generated module and no index publishes that package, 
   also regenerates from the contract, builds both distributions and imports the wheel out of a
   clean environment - the one failure this package can ship is a wheel with no stubs in it, which
   every test passes against because they run on the source tree. See `docs/python.md`.
+- `integrations/typescript/` — the TypeScript client, `hippocampus-client` on npm (released, not
+  yet uploaded; TODO-3 item 196). Three decisions carry it. (1) **It is Connect's client over a
+  generated descriptor**, not a hand-written one: `protoc-gen-es` generates the messages, enums and
+  service descriptor at build time (`buf` and the plugin are npm devDependencies, so `npm ci` is the
+  whole toolchain; `src/gen/` is gitignored, the Python client's rule), and `createClient` gives one
+  method per RPC with nothing written per RPC - so, unlike the Python client, it needs no coverage
+  test holding it to the contract. (2) **The gateway transport reads its routes off the descriptor.**
+  Each method's `google.api.http` option is the same annotation grpc-gateway compiled the server's
+  routes from, so `src/routes.ts` renders path variables, the body binding and the query string from
+  it - where the CLI's HTTP client hand-writes a method per RPC. A test holds every binding against
+  the OpenAPI document; `Watch`, having none, is refused with `Unimplemented`. It implements
+  Connect's `Transport` interface, so the generated client is the same over either wire, interceptors
+  included, and a gateway error comes back as a `ConnectError` with the service's gRPC code. The
+  host's `fetch` is an option, which is what lets the Obsidian plugin (which must use `requestUrl` to
+  escape the renderer's CORS policy) adopt it once it is published. (3) **Native gRPC is a separate
+  entry point** (`hippocampus-client/grpc`, over `@connectrpc/connect-node`, an optional peer
+  dependency), so a browser bundle never pulls in `node:http2`. The four encodings the Python
+  client's dataclasses absorb are helpers here instead (`src/encoding.ts`), so callers keep the
+  generated types. The one npm project in the tree; `go.mod`'s `ignore` directive keeps its
+  `node_modules` out of the Go module. Built, tested live against a throwaway service over both
+  transports, packed and imported from a clean project by the `typescript-client` CI job; published
+  by `publish-typescript`, gated on `PUBLISH_NPM`. See `docs/typescript.md`.
 - `integrations/eventsource/` — event-sourcing broker bridges: consume from a message broker and
   store each message as a memory. Its own Go module (module path
   `github.com/fastbean-au/hippocampus/integrations/eventsource`; `replace

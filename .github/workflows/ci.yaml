@@ -715,15 +715,86 @@ jobs:
           /tmp/wheel-check/bin/pip install --quiet dist/*.whl
           cd /tmp && /tmp/wheel-check/bin/python -c "import hippocampus; print(hippocampus.__version__)"
 
+  # The TypeScript client: generated from the contract at build time (buf + protoc-gen-es, both npm
+  # devDependencies, so `npm ci` is the whole toolchain), then type-checked, unit-tested, and run
+  # against a real service over BOTH transports - the gateway one is hand-written over the
+  # google.api.http annotations, and the fake fetch its unit tests use is only as right as its
+  # reading of grpc-gateway. The floor in package.json's engines and a current Node are both run.
+  typescript-client:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Start a throwaway service
+        run: |
+          set -euo pipefail
+
+          go build -o /tmp/hippocampus ./cmd/hippocampus
+          mkdir /tmp/store && cd /tmp/store
+          /tmp/hippocampus --port 50051 --gateway-port 8080 > /tmp/hippocampus.log 2>&1 &
+
+          for _ in $(seq 30); do
+            if curl -fsS http://127.0.0.1:8080/readyz >/dev/null; then
+              exit 0
+            fi
+
+            sleep 1
+          done
+
+          cat /tmp/hippocampus.log
+          exit 1
+
+      - name: Generate, build and test
+        working-directory: integrations/typescript
+        run: |
+          npm ci
+          npm test
+        env:
+          HIPPOCAMPUS_GATEWAY_URL: http://127.0.0.1:8080
+          HIPPOCAMPUS_GRPC_URL: http://127.0.0.1:50051
+
+      # The failure this package can ship is a tarball with no generated code in it: src/gen is
+      # gitignored, so an `npm pack` from an unbuilt tree packs an entry point importing files that
+      # are not there, and every test passes against the source tree regardless. Installing the
+      # tarball into an empty project and importing both entry points is the only check that sees it.
+      - name: Pack, and import the tarball from a clean project
+        working-directory: integrations/typescript
+        run: |
+          set -euo pipefail
+
+          npm pack
+          tarball="$(pwd)/$(ls hippocampus-client-*.tgz)"
+
+          mkdir /tmp/package-check && cd /tmp/package-check
+          npm init -y >/dev/null
+          npm install --silent "${tarball}" @connectrpc/connect-node
+
+          node --input-type=module -e 'import { createHippocampusClient, createGatewayTransport, VERSION } from "hippocampus-client"; import { createHippocampusGrpcTransport } from "hippocampus-client/grpc"; createHippocampusClient(createGatewayTransport({ baseUrl: "http://localhost:8080" })); console.log(VERSION)'
+
   # The embedded console is ~2,800 lines of JavaScript that no Go job can exercise. Its pure logic
   # lives in cmd/hippocampus/webui/lib.js — the capability matrix that decides which controls a
   # caller sees, the decay-curve geometry, the escaping, the age and metadata parsing — and this
   # runs it under node's built-in test runner, plus a drift guard pairing every data-act control in
   # the markup with a handler in app.js.
   #
-  # There is deliberately NOTHING to install: no dependencies, no lockfile, no node_modules inside
-  # a Go source tree, and so no npm ci and no npm audit step. That is a property this package
-  # documents and intends, and it is why the Obsidian plugin's departure left no JS tooling behind.
+  # There is deliberately NOTHING to install: no dependencies, no lockfile, no node_modules, and so
+  # no npm ci and no npm audit step. That is a property this package documents and intends. The
+  # TypeScript client above is the one npm project in this tree, and it is kept to its own
+  # directory: its node_modules is excluded from the Go module by an `ignore` directive in go.mod.
   webui:
     runs-on: ubuntu-latest
 
