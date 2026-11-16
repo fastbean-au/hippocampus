@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	log "github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/spf13/viper"
 
 	"github.com/fastbean-au/hippocampus/db"
@@ -240,6 +242,111 @@ func TestRunReencryptRefusals(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if err := runReencrypt(cfg); err == nil {
 				t.Error("runReencrypt succeeded")
+			}
+		})
+	}
+}
+
+// TestRunReencryptServerDriverOpenFailure covers the server-driver opens: a DSN nothing answers on
+// fails the mode rather than reporting nothing to do.
+func TestRunReencryptServerDriverOpenFailure(t *testing.T) {
+	cases := map[string]reencryptConfig{
+		"postgres": {StorageDriver: "postgres", PostgresDSN: "postgres://nobody@127.0.0.1:1/none?sslmode=disable&connect_timeout=1"},
+		"mysql":    {StorageDriver: "mysql", MySQLDSN: "nobody:none@tcp(127.0.0.1:1)/none?timeout=1s"},
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			v.Encryption = encryptionConfig{Enabled: true, Key: encodedTestKey(t)}
+
+			if err := runReencrypt(v); err == nil || !strings.Contains(err.Error(), "failed to open database") {
+				t.Errorf("runReencrypt error = %v, want the open failure", err)
+			}
+		})
+	}
+}
+
+// TestRunReencryptReportsABodyItCannotOpen covers a store holding a body sealed under a key the
+// configuration no longer carries: the mode stops and says so, rather than skipping the row.
+func TestRunReencryptReportsABodyItCannotOpen(t *testing.T) {
+	dir := t.TempDir()
+
+	lost, err := keyringFromConfig(encryptionConfig{Enabled: true, Key: encodedTestKey(t)})
+	if err != nil {
+		t.Fatalf("keyringFromConfig: %s", err)
+	}
+
+	store, err := db.New(dir, db.WithoutContentIndex())
+	if err != nil {
+		t.Fatalf("opening the store: %s", err)
+	}
+
+	store.SetKeyring(lost)
+
+	if _, err := store.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "sealed under a lost key"}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	_ = store.Close()
+
+	err = runReencrypt(reencryptConfig{
+		StorageDriver:    "sqlite",
+		StorageDirectory: dir,
+		Encryption:       encryptionConfig{Enabled: true, Key: encodedTestKey(t)},
+		NoContentIndex:   true,
+	})
+	if !errors.Is(err, seal.ErrUnknownKey) {
+		t.Errorf("runReencrypt error = %v, want ErrUnknownKey", err)
+	}
+}
+
+// TestLogEncryption covers the startup line in each configuration: nothing for no keys at all, the
+// held keys for a ring that only opens, and the active key - plus the OpenSearch warning - for one
+// that seals.
+//
+// Not parallel: it replaces the global logger's hooks.
+func TestLogEncryption(t *testing.T) {
+	key := encodedTestKey(t)
+
+	readOnly, err := keyringFromConfig(encryptionConfig{Key: key})
+	if err != nil {
+		t.Fatalf("keyringFromConfig: %s", err)
+	}
+
+	active, err := keyringFromConfig(encryptionConfig{Enabled: true, Key: key})
+	if err != nil {
+		t.Fatalf("keyringFromConfig: %s", err)
+	}
+
+	cases := []struct {
+		name       string
+		ring       *seal.Keyring
+		openSearch bool
+		want       []string
+	}{
+		{name: "no keys", ring: nil},
+		{name: "read only", ring: readOnly, want: []string{"storage encryption is off"}},
+		{name: "sealing", ring: active, want: []string{"sealed at rest under key " + keyIdOf(t, key)}},
+		{name: "sealing beside opensearch", ring: active, openSearch: true, want: []string{"sealed at rest", "the cluster indexes every body in the clear"}},
+	}
+
+	for _, v := range cases {
+		t.Run(v.name, func(t *testing.T) {
+			hook := logtest.NewGlobal()
+			log.SetLevel(log.InfoLevel)
+
+			logEncryption(v.ring, v.openSearch)
+
+			entries := hook.AllEntries()
+
+			if len(entries) != len(v.want) {
+				t.Fatalf("logged %d lines, want %d", len(entries), len(v.want))
+			}
+
+			for i, want := range v.want {
+				if !strings.Contains(entries[i].Message, want) {
+					t.Errorf("line %d = %q, want it to contain %q", i, entries[i].Message, want)
+				}
 			}
 		})
 	}

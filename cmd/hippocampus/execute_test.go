@@ -306,3 +306,46 @@ func TestExecute_InvalidConfig(t *testing.T) {
 		execute([]string{"--config_file", path})
 	})
 }
+
+// TestExecute_Reencrypt reaches the --reencrypt mode through execute, over an empty store, and
+// checks it reports what it did and exits without starting the server.
+func TestExecute_Reencrypt(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	path := writeConfigFile(t, `{"storage": {"directory": "`+filepath.ToSlash(t.TempDir())+`", "encryption": {"enabled": true, "key": "`+encodedTestKey(t)+`"}}}`)
+
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+
+	execute([]string{"--reencrypt", "--config_file", path})
+
+	reported := false
+
+	for _, entry := range hook.AllEntries() {
+		if strings.Contains(entry.Message, "re-encrypted 0 memories") {
+			reported = true
+		}
+	}
+
+	if !reported {
+		t.Error("--reencrypt did not report what it re-encrypted")
+	}
+}
+
+// TestExecute_ReencryptWithoutAKeyIsFatal: --reencrypt with encryption off has no key to
+// re-encrypt under, and exits non-zero rather than succeeding having done nothing.
+func TestExecute_ReencryptWithoutAKeyIsFatal(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	path := writeConfigFile(t, `{"storage": {"directory": "`+filepath.ToSlash(t.TempDir())+`"}}`)
+
+	withFatalPanic(t, func() {
+		execute([]string{"--reencrypt", "--config_file", path})
+	})
+}

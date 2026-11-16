@@ -173,3 +173,30 @@ func TestUnsealedArchiveImportsWithEncryptionOn(t *testing.T) {
 		t.Errorf("expected 2 events and 3 memories imported, got %v", imported)
 	}
 }
+
+// TestImportRefusesATruncatedSealedArchive covers an archive that announces itself as sealed and
+// ends inside its header: the import fails, and not as the FailedPrecondition a missing key gets,
+// since adding a key would not help.
+func TestImportRefusesATruncatedSealedArchive(t *testing.T) {
+	t.Parallel()
+
+	ring, _ := sealTestRing(t)
+
+	objects, err := archive.NewFileStore(filepath.Join(t.TempDir(), "archives"))
+	if err != nil {
+		t.Fatalf("NewFileStore: %s", err)
+	}
+
+	if err := objects.Put(context.Background(), "truncated.hca", bytes.NewReader([]byte("HIPSEAL\x01"))); err != nil {
+		t.Fatalf("Put: %s", err)
+	}
+
+	target := newTransferTestServer(t, nil)
+	target.objects = objects
+	target.keyring = ring
+
+	_, err = target.Import(context.Background(), &contract.ImportRequest{ObjectKey: "truncated.hca"})
+	if err == nil || status.Code(err) == codes.FailedPrecondition {
+		t.Errorf("got %v, want a failure other than FailedPrecondition", err)
+	}
+}
