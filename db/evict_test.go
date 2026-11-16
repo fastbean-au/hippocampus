@@ -217,3 +217,28 @@ func TestUsedBytes(t *testing.T) {
 		t.Errorf("expected used bytes to shrink after deletion, got %d -> %d", grown, shrunk)
 	}
 }
+
+// TestEvictionTallyCountsOnlyDeletedRows holds the result to the rows deleteMemoriesIfUnrecalled
+// really removed. A selected victim the recall-race guard spared must free nothing and must not
+// count toward its event's evictions, or the event would be deleted out from under it.
+func TestEvictionTallyCountsOnlyDeletedRows(t *testing.T) {
+	victims := evictionVictims{
+		eventIdByMemory: map[string]string{"a": "e1", "b": "e1"},
+		freedById: map[string]freedBytes{
+			"a": {bytes: 100, external: 10},
+			"b": {bytes: 200, external: 20},
+			"c": {bytes: 400, external: 40},
+		},
+	}
+
+	result, evictedPerEvent := victims.tally([]string{"a", "c"})
+
+	want := EvictionResult{Memories: 2, Bytes: 500, ExternalBytes: 50}
+	if result != want {
+		t.Errorf("tally = %+v, want %+v", result, want)
+	}
+
+	if evictedPerEvent["e1"] != 1 {
+		t.Errorf("event e1 lost %d memories, want 1 (b was spared)", evictedPerEvent["e1"])
+	}
+}

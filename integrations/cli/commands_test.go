@@ -931,3 +931,26 @@ func TestMemorySearchPagesAndBounds(t *testing.T) {
 		t.Errorf("request = %v, want offset 20 and only the lower bound", search)
 	}
 }
+
+// TestCommandAreasAreDisjoint rejects a key registered by two areas. commands() merges the areas
+// into one map, so the second entry would silently replace the first and one command would run
+// another's handler; TestEveryCommandIsDocumented cannot see it, because the key is still present.
+func TestCommandAreasAreDisjoint(t *testing.T) {
+	owners := make(map[string]int)
+
+	for i, area := range commandAreas {
+		for k := range area() {
+			if first, seen := owners[k]; seen {
+				t.Errorf("command '%s' is registered by area %d and again by area %d", k, first, i)
+
+				continue
+			}
+
+			owners[k] = i
+		}
+	}
+
+	if got := len(commands()); got != len(owners) {
+		t.Errorf("commands() has %d entries, the areas register %d", got, len(owners))
+	}
+}

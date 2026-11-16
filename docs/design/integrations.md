@@ -92,8 +92,9 @@ github.com/fastbean-au/hippocampus => ../..`, so its client dependency tree stay
   dispatch (a probe flag set with interspersing disabled locates the command so global flags may
   appear on either side of it) and the single viper read of the global connection flags
   (`HIPPOCAMPUS_*` env overridable — token, TLS trust options mirroring the MCP bridge, timeout,
-  `--output text|json`); `commands.go` is the command registry + handlers, `output.go` the
-  text/protojson renderer. Shell completion (`completion.go`) is driven off the same `commands()`
+  `--output text|json`); `commands.go` holds the handlers and merges the command registry from
+  one table per area (`commands_memory.go`, `_link`, `_event`, `_admin`, `_transfer`), `output.go`
+  the text/protojson renderer. Shell completion (`completion.go`) is driven off the same `commands()`
   registry so it never drifts: `hippo completion <bash|zsh|fish>` emits a script that calls a
   hidden `hippo __complete` at completion time (special-cased in `run()`, needs no service
   connection), computing subcommand/flag/enum-value candidates from the registry. Built/vetted/

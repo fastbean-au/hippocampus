@@ -2101,24 +2101,58 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		return EvictionResult{}, nil
 	}
 
-	type evictionCandidate struct {
-		id      string
-		eventId string
-		// size is the row's stored payload; indexedBytes is what the content index holds for it,
-		// which is a different figure once compression is on - see memoriesFootprint.
-		size          int64
-		indexedBytes  int64
-		externalBytes int64
-		value         float64
-		timeRecalled  int64
-		recallCount   int32
+	scan, err := d.scanEvictionCandidates(ctx, s)
+	if err != nil {
+		return EvictionResult{}, err
 	}
 
+	victims := d.selectEvictionVictims(scan.candidates, target)
+
+	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, victims.deletions, d.forgetReasonFor(ForgetRuleEviction, CauseEviction, s))
+	if err != nil {
+		log.Errorf("failed to delete evicted memories: %s", err.Error())
+
+		return EvictionResult{}, err
+	}
+
+	result, evictedPerEvent := victims.tally(deletedIds)
+
+	result.Events, err = d.cleanUpEvictedEvents(ctx, scan, evictedPerEvent)
+
+	return result, err
+}
+
+// evictionCandidate is one memory the eviction scan found outside its retention window.
+type evictionCandidate struct {
+	id      string
+	eventId string
+	// size is the row's stored payload; indexedBytes is what the content index holds for it, which
+	// is a different figure once compression is on - see memoriesFootprint.
+	size          int64
+	indexedBytes  int64
+	externalBytes int64
+	value         float64
+	timeRecalled  int64
+	recallCount   int32
+}
+
+// evictionScan is what one eviction scan read: the candidates, and for every event that holds a
+// memory, how many it holds and whether it is already flagged as consolidated.
+type evictionScan struct {
+	candidates         []evictionCandidate
+	memoriesPerEvent   map[string]int
+	consolidatedEvents map[string]bool
+}
+
+// scanEvictionCandidates reads every memory once and returns the eviction candidates among them.
+// It calls no other DB method while the rows are open (on SQLite the pool has one connection), and
+// closes them before returning, so the steps after it are free to.
+func (d *DB) scanEvictionCandidates(ctx context.Context, s Server) (evictionScan, error) {
 	ranks, err := d.loadSignificanceRanks(ctx)
 	if err != nil {
 		log.Errorf("failed to load significance registry: %s", err.Error())
 
-		return EvictionResult{}, err
+		return evictionScan{}, err
 	}
 
 	// The query timeout bounds the SCAN, and only the scan. Everything after it - the delete
@@ -2144,13 +2178,14 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 	if err != nil {
 		log.Errorf("failed to evict memories: %s", err.Error())
 
-		return EvictionResult{}, err
+		return evictionScan{}, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	var evictionCandidates []evictionCandidate
-	memoriesPerEvent := make(map[string]int)
-	consolidatedEvents := make(map[string]bool)
+	scan := evictionScan{
+		memoriesPerEvent:   make(map[string]int),
+		consolidatedEvents: make(map[string]bool),
+	}
 
 	for rows.Next() {
 		var c evictionCandidate
@@ -2175,7 +2210,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		); err != nil {
 			log.Errorf("failed to scan memory for eviction: %s", err.Error())
 
-			return EvictionResult{}, err
+			return evictionScan{}, err
 		}
 
 		candidate.MemorySignificance = rankOf(ranks, memoryLevelID)
@@ -2187,8 +2222,8 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		// candidate - otherwise the event could be seen as fully evicted and deleted out from under
 		// the memory that survived, leaving it dangling.
 		if c.eventId != "" {
-			memoriesPerEvent[c.eventId]++
-			consolidatedEvents[c.eventId] = consolidated
+			scan.memoriesPerEvent[c.eventId]++
+			scan.consolidatedEvents[c.eventId] = consolidated
 		}
 
 		// A memory still inside its minimum retention window is protected from eviction even when the
@@ -2201,35 +2236,51 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		c.value = s.MemoryValue(candidate)
 		c.timeRecalled = candidate.TimeRecalled
 		c.recallCount = candidate.RecallCount
-		evictionCandidates = append(evictionCandidates, c)
+		scan.candidates = append(scan.candidates, c)
 	}
 
 	if err := rows.Err(); err != nil {
 		log.Errorf("failed to evict memories: %s", err.Error())
 
-		return EvictionResult{}, err
+		return evictionScan{}, err
 	}
 
 	_ = rows.Close()
 
-	sort.Slice(evictionCandidates, func(i int, j int) bool {
-		return evictionCandidates[i].value < evictionCandidates[j].value
+	return scan, nil
+}
+
+// freedBytes is what deleting one candidate is estimated to reclaim, on each axis.
+type freedBytes struct {
+	bytes    int64
+	external int64
+}
+
+// evictionVictims is the selection one eviction pass will try to delete. The freed bytes are kept
+// per id rather than accumulated, because the result is counted from the rows that were actually
+// deleted, not from the selection.
+type evictionVictims struct {
+	deletions       []memoryRecallSnapshot
+	eventIdByMemory map[string]string
+	freedById       map[string]freedBytes
+}
+
+// selectEvictionVictims takes the least valuable candidates until the target is met on both axes.
+// It sorts candidates in place. The per-row estimate is memoryFootprint, the exact complement of
+// usedBytesLiveRows, so a pass that meets its target brings UsedBytes down by that much.
+func (d *DB) selectEvictionVictims(candidates []evictionCandidate, target EvictionTarget) evictionVictims {
+	sort.Slice(candidates, func(i int, j int) bool {
+		return candidates[i].value < candidates[j].value
 	})
 
-	// freedBytes is what deleting one candidate is estimated to reclaim, on each axis. Kept per id
-	// rather than accumulated as the selection is built, because the totals below are counted from
-	// the rows that were actually deleted.
-	type freedBytes struct {
-		bytes    int64
-		external int64
+	victims := evictionVictims{
+		eventIdByMemory: make(map[string]string),
+		freedById:       make(map[string]freedBytes),
 	}
 
-	var deletions []memoryRecallSnapshot
-	eventIdByMemory := make(map[string]string)
-	freedById := make(map[string]freedBytes)
 	var selected, selectedExternal int64
 
-	for _, c := range evictionCandidates {
+	for _, c := range candidates {
 		if target.satisfied(selected, selectedExternal) {
 			break
 		}
@@ -2237,8 +2288,8 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		rowBytes := d.memoryFootprint(c.size, c.indexedBytes)
 		selected += rowBytes
 		selectedExternal += c.externalBytes
-		freedById[c.id] = freedBytes{bytes: rowBytes, external: c.externalBytes}
-		deletions = append(deletions, memoryRecallSnapshot{
+		victims.freedById[c.id] = freedBytes{bytes: rowBytes, external: c.externalBytes}
+		victims.deletions = append(victims.deletions, memoryRecallSnapshot{
 			id:           c.id,
 			timeRecalled: c.timeRecalled,
 			recallCount:  c.recallCount,
@@ -2246,52 +2297,56 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		})
 
 		if c.eventId != "" {
-			eventIdByMemory[c.id] = c.eventId
+			victims.eventIdByMemory[c.id] = c.eventId
 		}
 	}
 
-	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, deletions, d.forgetReasonFor(ForgetRuleEviction, CauseEviction, s))
-	if err != nil {
-		log.Errorf("failed to delete evicted memories: %s", err.Error())
+	return victims
+}
 
-		return EvictionResult{}, err
-	}
-
-	// Everything below is derived from the rows ACTUALLY deleted (deletedIds), not the selection.
-	// The recall-race guard in deleteMemoriesIfUnrecalled may skip a selected candidate (recalled
-	// since the scan), so counting from the selection would overstate the freed bytes and, worse,
-	// flag an event as consolidated when none of its memories actually went - or count it toward the
-	// all-evicted event-delete test.
+// tally reports what deleting deletedIds freed, and how many memories each event lost.
+//
+// Everything here is derived from the rows ACTUALLY deleted, not the selection. The recall-race
+// guard in deleteMemoriesIfUnrecalled may skip a selected candidate (recalled since the scan), so
+// counting from the selection would overstate the freed bytes and, worse, flag an event as
+// consolidated when none of its memories actually went - or count it toward the all-evicted
+// event-delete test.
+func (v evictionVictims) tally(deletedIds []string) (EvictionResult, map[string]int) {
 	result := EvictionResult{Memories: len(deletedIds)}
 	evictedPerEvent := make(map[string]int)
 
 	for _, id := range deletedIds {
-		result.Bytes += freedById[id].bytes
-		result.ExternalBytes += freedById[id].external
+		result.Bytes += v.freedById[id].bytes
+		result.ExternalBytes += v.freedById[id].external
 
-		if eid, ok := eventIdByMemory[id]; ok {
+		if eid, ok := v.eventIdByMemory[id]; ok {
 			evictedPerEvent[eid]++
 		}
 	}
 
-	// Delete events whose memories were all evicted, otherwise set MemoriesConsolidated. A
-	// concurrent write can have attached a fresh memory to the event since the scan above, or a
-	// concurrent recall can have kept one of its memories out of countMemories's deletions;
-	// DeleteEventIfEmpty re-checks live state so the event only goes if it's actually empty. These
-	// per-event cleanups are best-effort - retErr surfaces the first failure for the sleep cycle's
-	// success metric without stopping the remaining events.
-	//
-	// A failure here therefore leaves the event standing, and eviction can never reach it again: it
-	// enters this map only through a memory being deleted, and it has none left. What retries it is
-	// the flag set below - an event carrying memories_consolidated and holding nothing is swept by
-	// the bare-event pass on the next cycle whatever it is worth (see hippocampus.sweepEmptyEvent),
-	// which is why the fall-through matters as much as the delete.
+	return result, evictedPerEvent
+}
+
+// cleanUpEvictedEvents deletes the events whose memories were all evicted and flags the rest as
+// consolidated, returning how many it deleted. A concurrent write can have attached a fresh memory
+// to the event since the scan, or a concurrent recall can have kept one of its memories out of the
+// deletions; DeleteEventIfEmpty re-checks live state so the event only goes if it's actually
+// empty. These per-event cleanups are best-effort - the error returned is the first failure, for
+// the sleep cycle's success metric, and it does not stop the remaining events.
+//
+// A failure here therefore leaves the event standing, and eviction can never reach it again: it
+// enters evictedPerEvent only through a memory being deleted, and it has none left. What retries it
+// is the flag set below - an event carrying memories_consolidated and holding nothing is swept by
+// the bare-event pass on the next cycle whatever it is worth (see hippocampus.sweepEmptyEvent),
+// which is why the fall-through matters as much as the delete.
+func (d *DB) cleanUpEvictedEvents(ctx context.Context, scan evictionScan, evictedPerEvent map[string]int) (int, error) {
+	var deletedEvents int
 	var retErr error
 
 	for id, evicted := range evictedPerEvent {
 		deleted := false
 
-		if evicted == memoriesPerEvent[id] {
+		if evicted == scan.memoriesPerEvent[id] {
 			var err error
 
 			deleted, err = d.DeleteEventIfEmpty(ctx, id, CauseEviction)
@@ -2305,12 +2360,12 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		}
 
 		if deleted {
-			result.Events++
+			deletedEvents++
 
 			continue
 		}
 
-		if !consolidatedEvents[id] {
+		if !scan.consolidatedEvents[id] {
 			if err := d.setEventConsolidated(ctx, id); err != nil {
 				log.Errorf("failed to set MemoriesConsolidated for event '%s' after eviction: %s", id, err.Error())
 
@@ -2321,7 +2376,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		}
 	}
 
-	return result, retErr
+	return deletedEvents, retErr
 }
 
 // ConsolidateEventMemories evaluates every memory carrying an event_id, deleting those the server
