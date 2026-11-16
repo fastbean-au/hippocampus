@@ -63,6 +63,8 @@ by a `repository_dispatch`, so each states for itself which service version it w
 
 ## [Unreleased]
 
+## [0.54.1] - 2026-11-17
+
 ### Added
 
 - **Encryption keys can live in a KMS.** `storage.encryption.kms.*` (`aws`, `gcp` or `vault`) keeps
@@ -4307,7 +4309,8 @@ This release added the delivery and production-readiness layer around it:
 [langgraph-repo]: https://github.com/fastbean-au/hippocampus-langgraph
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.54.1...HEAD
+[0.54.1]: https://github.com/fastbean-au/hippocampus/compare/v0.54.0...v0.54.1
 [0.54.0]: https://github.com/fastbean-au/hippocampus/compare/v0.53.4...v0.54.0
 [0.53.4]: https://github.com/fastbean-au/hippocampus/compare/v0.53.3...v0.53.4
 [0.53.3]: https://github.com/fastbean-au/hippocampus/compare/v0.53.2...v0.53.3
