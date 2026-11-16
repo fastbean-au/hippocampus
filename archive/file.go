@@ -2,6 +2,7 @@ package archive
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -31,8 +32,9 @@ import (
 // merely rude; over a filesystem it is a path, and Import takes its object_key straight from the
 // request. Keys are therefore validated before they are joined (see resolve), which is what makes
 // "../../etc/passwd" a request that is refused rather than one that is quietly answered about a
-// different file. The directory itself is assumed to be server-owned: containment is lexical, so a
-// symlink planted inside it by something else would still be followed.
+// different file. That check is lexical, so it cannot see a symlink planted inside the directory;
+// every open, create, rename and remove therefore goes through an os.Root on the directory, which
+// refuses any path that leaves it, symlinks included (TODO-3 item 191).
 type FileStore struct {
 	dir string
 }
@@ -76,16 +78,30 @@ func (f *FileStore) Directory() string {
 func (f *FileStore) Put(ctx context.Context, key string, body io.Reader) error {
 	log.Trace("func() archive.FileStore.Put")
 
-	target, err := f.resolve(key)
+	name, err := f.resolve(key)
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+	root, err := f.openRoot()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		_ = root.Close()
+	}()
+
+	if err := root.MkdirAll(filepath.Dir(name), 0o750); err != nil {
 		return fmt.Errorf("failed to create the directory for object '%s': %w", key, err)
 	}
 
-	temporary, err := os.CreateTemp(filepath.Dir(target), ".archive-*.partial")
+	// os.Root has no CreateTemp, so the name is made here and O_EXCL stands in for the retry loop:
+	// 130 random bits do not collide, and if they somehow did the export fails rather than sharing
+	// a file with another one.
+	temporaryName := filepath.Join(filepath.Dir(name), ".archive-"+rand.Text()+".partial")
+
+	temporary, err := root.OpenFile(temporaryName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to create a temporary file for object '%s': %w", key, err)
 	}
@@ -94,7 +110,7 @@ func (f *FileStore) Put(ctx context.Context, key string, body io.Reader) error {
 	// renames it away, so removing it unconditionally is both correct and the only way to be sure
 	// a failed export leaves nothing behind.
 	defer func() {
-		_ = os.Remove(temporary.Name())
+		_ = root.Remove(temporaryName)
 	}()
 
 	if _, err := io.Copy(temporary, &contextReader{ctx: ctx, reader: body}); err != nil {
@@ -115,11 +131,11 @@ func (f *FileStore) Put(ctx context.Context, key string, body io.Reader) error {
 		return fmt.Errorf("failed to close object '%s': %w", key, err)
 	}
 
-	if err := os.Chmod(temporary.Name(), 0o640); err != nil {
+	if err := root.Chmod(temporaryName, 0o640); err != nil {
 		return fmt.Errorf("failed to set permissions on object '%s': %w", key, err)
 	}
 
-	if err := os.Rename(temporary.Name(), target); err != nil {
+	if err := root.Rename(temporaryName, name); err != nil {
 		return fmt.Errorf("failed to store object '%s': %w", key, err)
 	}
 
@@ -133,17 +149,39 @@ func (f *FileStore) Get(ctx context.Context, key string) (io.ReadCloser, error) 
 		return nil, err
 	}
 
-	target, err := f.resolve(key)
+	name, err := f.resolve(key)
 	if err != nil {
 		return nil, err
 	}
 
-	file, err := os.Open(target)
+	root, err := f.openRoot()
+	if err != nil {
+		return nil, err
+	}
+
+	// The file outlives the root: closing an os.Root does not close what was opened through it.
+	defer func() {
+		_ = root.Close()
+	}()
+
+	file, err := root.Open(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch object '%s': %w", key, err)
 	}
 
 	return file, nil
+}
+
+// openRoot opens the archive directory as an os.Root for one operation. It is opened per call
+// rather than held, so the store keeps no descriptor open between exports and a directory that has
+// been replaced underneath the process is the new one, as it was when every call was a path.
+func (f *FileStore) openRoot() (*os.Root, error) {
+	root, err := os.OpenRoot(f.dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open the archive directory '%s': %w", f.dir, err)
+	}
+
+	return root, nil
 }
 
 // Ping reports whether the archive directory is still there and still a directory, for the
@@ -170,7 +208,9 @@ func (f *FileStore) Ping(ctx context.Context) error {
 	return nil
 }
 
-// resolve turns an object key into a path inside the directory, or refuses it.
+// resolve turns an object key into a name relative to the directory, or refuses it. The name is
+// opened through an os.Root (see openRoot), which is what stops a symlink inside the directory
+// leading out of it; this is the lexical half, and the half that explains a refusal.
 //
 // It refuses rather than sanitises, which is the decision worth recording. Anchoring the key and
 // cleaning it - the usual trick - is safe, in that "../../etc/passwd" then names a file called
@@ -206,16 +246,16 @@ func (f *FileStore) resolve(key string) (string, error) {
 		}
 	}
 
-	target := filepath.Join(f.dir, filepath.FromSlash(key))
+	name := filepath.FromSlash(key)
 
 	// The segment check above already makes this unreachable. It stays because the thing being
 	// asserted is a security property, and an assertion is cheaper than the next reader having to
 	// re-derive that the loop above is exhaustive.
-	if !strings.HasPrefix(target, f.dir+string(filepath.Separator)) {
+	if !filepath.IsLocal(name) {
 		return "", fmt.Errorf("object key '%s' resolves outside the archive directory", key)
 	}
 
-	return target, nil
+	return name, nil
 }
 
 // contextReader lets a long Put honour the calling RPC's deadline: io.Copy has no context, and an

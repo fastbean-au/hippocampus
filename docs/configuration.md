@@ -2728,7 +2728,9 @@ forget_ behind infrastructure it does not otherwise need. The directory is creat
 missing; each archive is written to a temporary file and renamed into place, so an export
 interrupted half way leaves nothing rather than a truncated file that `Import` would accept and
 then fail part way through. `Import`'s `object_key` is validated against the directory: a key that
-is absolute, or that carries a `..` segment, is refused rather than reinterpreted. Point it at a
+is absolute, or that carries a `..` segment, is refused rather than reinterpreted, and a symlink
+inside the directory is never followed out of it (nor listed, so pruning ignores it). The directory
+itself may be a symlink. Point it at a
 directory a backup takes, or at a mounted volume. Nothing prunes the archives `Export` writes when
 called; only the scheduled ones below are rotated.
 

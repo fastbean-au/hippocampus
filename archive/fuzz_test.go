@@ -80,10 +80,14 @@ func FuzzResolve(f *testing.F) {
 	root := store.Directory()
 
 	f.Fuzz(func(t *testing.T, key string) {
-		target, err := store.resolve(key)
+		name, err := store.resolve(key)
 		if err != nil {
 			return
 		}
+
+		// resolve returns a name relative to the directory, opened through an os.Root; joined here
+		// so the lexical half is still held to staying inside on its own.
+		target := filepath.Join(root, name)
 
 		rel, err := filepath.Rel(root, target)
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {

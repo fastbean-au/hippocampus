@@ -84,6 +84,10 @@ itself which service version it was built against.
   domain. They are now logged, and the browser sees a fixed message. A callback whose `state` does
   not match no longer clears the cookies of a login in progress. See
   [Authentication](docs/configuration.md#authentication).
+- **The archive directory no longer follows symlinks out of itself.** A key was checked lexically,
+  so a symlink inside `archive.directory` let an export write, and an import read, outside it. The
+  store now opens through an `os.Root`, and listing skips symlinks. See
+  [Transfer and archive](docs/configuration.md#transfer-and-archive).
 
 ## [0.53.4] - 2026-11-13
 

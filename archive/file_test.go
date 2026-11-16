@@ -439,3 +439,68 @@ func TestFileStore_ListAndDelete(t *testing.T) {
 		t.Error("Delete accepted a key that leaves the archive directory")
 	}
 }
+
+// TestFileStore_RefusesSymlinksOut is the half of containment a lexical check cannot give: a key
+// can be well formed and still leave the directory, through a symlink planted inside it. Both a read
+// and a write through one must fail, and listing must not report one as an archive (TODO-3 item
+// 191).
+func TestFileStore_RefusesSymlinksOut(t *testing.T) {
+	root := t.TempDir()
+
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(outside, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %s", err)
+	}
+
+	secret := filepath.Join(outside, "secret.gz")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("failed to write the fixture: %s", err)
+	}
+
+	dir := filepath.Join(root, "archives")
+
+	store, err := NewFileStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileStore: %s", err)
+	}
+
+	if err := os.Symlink(outside, filepath.Join(dir, "linked")); err != nil {
+		t.Fatalf("Symlink: %s", err)
+	}
+
+	if err := os.Symlink(secret, filepath.Join(dir, "secret.gz")); err != nil {
+		t.Fatalf("Symlink: %s", err)
+	}
+
+	ctx := context.Background()
+
+	for _, key := range []string{"linked/secret.gz", "secret.gz"} {
+		reader, err := store.Get(ctx, key)
+		if err == nil {
+			_ = reader.Close()
+
+			t.Errorf("Get followed the symlink in %q out of the archive directory", key)
+		}
+	}
+
+	if err := store.Put(ctx, "linked/written.gz", strings.NewReader("x")); err == nil {
+		t.Error("Put followed a symlinked directory out of the archive directory")
+	}
+
+	if _, err := os.Stat(filepath.Join(outside, "written.gz")); !os.IsNotExist(err) {
+		t.Error("a Put through a symlink wrote a file outside the archive directory")
+	}
+
+	keys, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("List: %s", err)
+	}
+
+	if len(keys) != 0 {
+		t.Errorf("List = %v, want no keys: a symlink is not an archive", keys)
+	}
+
+	if body, err := os.ReadFile(secret); err != nil || string(body) != "secret" {
+		t.Error("the file outside the archive directory was changed")
+	}
+}

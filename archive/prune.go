@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -36,13 +35,24 @@ type Pruner interface {
 
 // List walks the archive directory for keys under prefix. The temporary files an in-flight Put
 // writes are skipped, since they are not archives and one is renamed into place or removed the
-// moment its Put returns.
+// moment its Put returns. So are symlinks: Get and Delete refuse to follow one out of the directory,
+// so a key naming one is not an archive the store can hand back, and pruning must not count it
+// against the archives it keeps.
 func (f *FileStore) List(ctx context.Context, prefix string) ([]string, error) {
 	log.Trace("func() archive.FileStore.List")
 
+	root, err := f.openRoot()
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		_ = root.Close()
+	}()
+
 	var keys []string
 
-	err := filepath.WalkDir(f.dir, func(path string, entry fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -51,16 +61,12 @@ func (f *FileStore) List(ctx context.Context, prefix string) ([]string, error) {
 			return err
 		}
 
-		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".archive-") {
+		if entry.IsDir() || entry.Type()&fs.ModeSymlink != 0 || strings.HasPrefix(entry.Name(), ".archive-") {
 			return nil
 		}
 
-		relative, err := filepath.Rel(f.dir, path)
-		if err != nil {
-			return err
-		}
-
-		key := filepath.ToSlash(relative)
+		// An fs.FS path is already slash-separated and relative to the root, which is a key.
+		key := path
 
 		if strings.HasPrefix(key, prefix) {
 			keys = append(keys, key)
@@ -82,12 +88,21 @@ func (f *FileStore) List(ctx context.Context, prefix string) ([]string, error) {
 func (f *FileStore) Delete(ctx context.Context, key string) error {
 	log.Trace("func() archive.FileStore.Delete")
 
-	target, err := f.resolve(key)
+	name, err := f.resolve(key)
 	if err != nil {
 		return err
 	}
 
-	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+	root, err := f.openRoot()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		_ = root.Close()
+	}()
+
+	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("failed to delete object '%s': %w", key, err)
 	}
 

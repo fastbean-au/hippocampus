@@ -23,7 +23,11 @@ already upserted what it read. And a key is **refused, not sanitised**: `Import`
 anchoring-and-cleaning (the usual trick) would answer a request for `../../etc/passwd` with some
 other file rather than with an error — `resolve` therefore rejects an absolute key and any
 `.`/`..`/empty segment, which also keeps the two backends naming the same object for any key
-either accepts. Containment is lexical, so the directory is assumed server-owned. The
+either accepts. That check is lexical and cannot see a symlink planted inside the directory, so
+every open, create, rename and remove goes through an **`os.Root`** on it, opened per call, which
+refuses a path that leaves the directory by any route; `List` walks the same root and skips
+symlinks, so pruning neither reports one nor counts it against the archives it keeps (TODO-3 item
+191). The
 transfer RPCs live in `hippocampus/transfer.go`: `Transfer` dials `transfer.targetAddress` with
 credentials from `Transfer.clientCredentials`, which honours the same TLS trust-option block as
 `opensearch.tls` (`transfer.tls.{caCertFile,certFile,keyFile,insecureSkipVerify}`); TLS is
