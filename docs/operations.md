@@ -1386,9 +1386,18 @@ key kept beside it, so keep the key on its own rotation, away from the backups.
 Put the current key in `storage.encryption.retiredKeys`, a new one in `storage.encryption.key`, and
 restart. New writes take the new key, and every row under the old one goes on reading. To retire the
 old key altogether, run `hippocampus --reencrypt -c config.json`. It rewrites every body and queued
-callback that is not under the active key, and logs how many it rewrote. The old key can come out of
-the configuration once a run reports nothing to rewrite. It also needs to stay wherever an older
-backup or archive might be restored from.
+callback that is not under the active key, and logs how many it rewrote. When it finishes it marks
+the old key drained in the store's [key ledger](configuration.md#the-key-ledger) and logs its id:
+from then on the key can come out of the configuration. Until then, a start without it is refused
+(`storage.encryption.ledgerCheck`), because rows under it would fail to read. It also needs to stay
+wherever an older backup or archive might be restored from.
+
+With a [KMS](configuration.md#a-key-management-service) there is no key in the configuration to
+rotate. Rotation inside the KMS needs nothing from the service. To move the store to a different KMS
+key, change `storage.encryption.kms.keyId` and restart: the store generates a new data key under it,
+and data keys under the old KMS key go on unwrapping for as long as the service can still use that
+key. Run `--reencrypt` before revoking it. Moving from a configured key to a KMS works the same way:
+put the key in `retiredKeys`, set `kms.provider`, restart, and re-encrypt.
 
 `--reencrypt` writes to the store. On SQLite the storage lock means the service must be stopped. On
 PostgreSQL and MySQL it may run beside live instances, which go on serving: a row a live instance

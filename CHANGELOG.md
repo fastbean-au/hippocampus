@@ -55,13 +55,26 @@ construction. (It is not yet uploaded to PyPI; until it is, install it from the 
 carries the same contract but reports its version as `0.0.0.dev0` — see
 [the Python client](docs/python.md).)
 
-Three subprojects have **their own repositories and their own version lines**, and a release here
+Four subprojects have **their own repositories and their own version lines**, and a release here
 makes no promise about them: the [Obsidian plugin][obsidian-repo], the [LlamaIndex
-adapter][llamaindex-repo] and the [OpenTelemetry collector][otel-repo]. Each takes a versioned
-dependency on this module and is told about a release by a `repository_dispatch`, so each states for
-itself which service version it was built against.
+adapter][llamaindex-repo], the [LangGraph store][langgraph-repo] and the [OpenTelemetry
+collector][otel-repo]. Each takes a versioned dependency on this module and is told about a release
+by a `repository_dispatch`, so each states for itself which service version it was built against.
 
 ## [Unreleased]
+
+### Added
+
+- **Encryption keys can live in a KMS.** `storage.encryption.kms.*` (`aws`, `gcp` or `vault`) keeps
+  a random data key per store, stored only wrapped by a key that never leaves the KMS. See [a key
+  management service](docs/configuration.md#a-key-management-service).
+
+### Changed
+
+- **A start missing a key the store needs is refused.** A new key ledger (schema version 19, seeded
+  on the first start) records every key a row has been sealed under. Each start checks the configured
+  keys against it, and `storage.encryption.ledgerCheck: warn` starts anyway. `--reencrypt` marks a
+  key drained once no row is under it. See [the key ledger](docs/configuration.md#the-key-ledger).
 
 ### Security
 
@@ -4291,6 +4304,7 @@ This release added the delivery and production-readiness layer around it:
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
 
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
+[langgraph-repo]: https://github.com/fastbean-au/hippocampus-langgraph
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
 [Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.54.0...HEAD

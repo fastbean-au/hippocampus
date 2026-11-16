@@ -241,13 +241,15 @@ func backfillSearch(cfg backfillConfig) {
 
 // setBackfillKeyring gives a rebuild's store the ring its bodies were sealed with. A configuration
 // the ring cannot be built from ends the mode, as the service would refuse to start on it.
+//
+// A rebuild reads bodies and seals none, so the ring is built as encryption-off would build it:
+// every configured key held to open, and no KMS data key generated for a store that has none.
 func setBackfillKeyring(database *db.DB, cfg encryptionConfig) {
-	ring, err := keyringFromConfig(cfg)
-	if err != nil {
+	cfg.Enabled = false
+
+	if _, err := openKeyring(context.Background(), database, cfg); err != nil {
 		_ = database.Close()
 
 		log.Fatalf("invalid storage.encryption configuration: %s", err.Error())
 	}
-
-	database.SetKeyring(ring)
 }

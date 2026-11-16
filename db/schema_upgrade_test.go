@@ -472,6 +472,11 @@ var schemaFixtureTags = map[string]string{
 	// exercised by TestBodyEncryptionMigratesAPreMigrationQueue instead.
 	"body_encryption": notReleasedBefore,
 
+	// The key ledger. Every released schema predates it, so the newest fixture is the one named;
+	// none of them holds a sealed row, so what the fixtures prove is that the ledger is built on an
+	// upgraded store, and TestKeyLedgerSeedsFromAnExistingStore proves the seeding.
+	"key_ledger": "v0.38.3",
+
 	// The server dialects' content index. Every released server schema predates it, so the newest
 	// fixture is the one that exercises it - and it exercises the part that matters, which is not
 	// the CREATE TABLE but the backfill: a store upgraded into this index and left empty answers

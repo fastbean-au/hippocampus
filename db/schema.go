@@ -92,7 +92,7 @@ type schemaMigration struct {
 // these steps arrived across seventeen releases, several of them are already the accumulated result
 // of earlier ones, and no store anywhere is at an intermediate point between them - every store in
 // existence has either seen all of them or is about to. What the ledger needs to be honest about is
-// the future, and it is: version 18 is where this list ends today, and a store recording 19 was
+// the future, and it is: version 19 is where this list ends today, and a store recording 20 was
 // written by something this build has not met.
 func (d *DB) migrations() []schemaMigration {
 	return []schemaMigration{
@@ -244,6 +244,14 @@ func (d *DB) migrations() []schemaMigration {
 			version: 18,
 			name:    "body_encryption",
 			apply:   (*DB).migrateBodyEncryption,
+		},
+		{
+			// The key ledger (keyledger.go): one row per key a row has ever been sealed under, and
+			// the store's KMS-wrapped data keys. It seeds itself by scanning both sealed columns, so
+			// it sits after 18, which adds the second of them.
+			version: 19,
+			name:    "key_ledger",
+			apply:   (*DB).initKeyLedger,
 		},
 	}
 }

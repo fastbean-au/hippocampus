@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/seal"
+	"github.com/fastbean-au/hippocampus/seal/kms"
 )
 
 // encryptionConfig is the storage.encryption.* block: whether new bodies are sealed, the key they
@@ -25,7 +29,18 @@ type encryptionConfig struct {
 	// RetiredKeys is a list of base64 keys separated by commas or whitespace. A string rather than a
 	// list so it can be injected as one environment variable, which is how a secret should arrive.
 	RetiredKeys string
+
+	// LedgerCheck is what a start does about a key the store's key ledger names and the ring does not
+	// hold: "refuse" to start, or "warn" and serve, every row under the key failing as it is read.
+	LedgerCheck string
+
+	// KMS is the storage.encryption.kms.* block. A provider in place of Key makes the active key a
+	// data key the store keeps wrapped by that KMS (openKeyring).
+	KMS kms.Config
 }
+
+// ledgerCheckPolicies are the values storage.encryption.ledgerCheck accepts.
+var ledgerCheckPolicies = []string{"refuse", "warn"}
 
 // encryptionConfigFromViper reads the storage.encryption.* keys.
 func encryptionConfigFromViper() encryptionConfig {
@@ -33,58 +48,86 @@ func encryptionConfigFromViper() encryptionConfig {
 		Enabled:     viper.GetBool("storage.encryption.enabled"),
 		Key:         viper.GetString("storage.encryption.key"),
 		RetiredKeys: viper.GetString("storage.encryption.retiredKeys"),
+		LedgerCheck: viper.GetString("storage.encryption.ledgerCheck"),
+		KMS: kms.Config{
+			Provider: viper.GetString("storage.encryption.kms.provider"),
+			Key:      viper.GetString("storage.encryption.kms.keyId"),
+			Endpoint: viper.GetString("storage.encryption.kms.endpoint"),
+			Token:    viper.GetString("storage.encryption.kms.token"),
+		},
 	}
 }
 
-// keyringFromConfig builds the ring the store and the archive path share. It returns nil when no key
-// is configured at all - the default, which seals nothing and opens nothing sealed.
+// usesKMS reports whether the store's data keys are wrapped by a KMS.
+func (c encryptionConfig) usesKMS() bool {
+	return c.KMS.Provider != ""
+}
+
+// configuredKeys is what the configuration itself holds: the key new bodies are sealed under, when
+// one is configured and encryption is on, and the keys held only to open.
+type configuredKeys struct {
+	active  []byte
+	retired [][]byte
+}
+
+// keysFromConfig decodes the keys the configuration holds directly. A KMS-backed configuration
+// holds no active key here - it is a data key only the store and the KMS together can produce - so
+// it is valid with encryption on and storage.encryption.key unset.
 //
 // The active key is the configured key only while encryption is enabled. Disabled, the same key is
 // held as retired, so a store written while it was on goes on reading after it is turned off.
-func keyringFromConfig(cfg encryptionConfig) (*seal.Keyring, error) {
+func keysFromConfig(cfg encryptionConfig) (configuredKeys, error) {
+	var keys configuredKeys
+
 	retired := strings.FieldsFunc(cfg.RetiredKeys, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\n' || r == '\t'
 	})
 
-	if cfg.Key == "" && len(retired) == 0 {
-		if cfg.Enabled {
-			return nil, fmt.Errorf("storage.encryption.enabled needs storage.encryption.key (generate one with `openssl rand -base64 %d`)", seal.KeyBytes)
-		}
-
-		return nil, nil
+	if cfg.Enabled && cfg.Key != "" && cfg.usesKMS() {
+		return keys, fmt.Errorf("storage.encryption.key and storage.encryption.kms.provider both name the key new bodies are sealed under; set one of them (a key sealed under before moving to a KMS belongs in storage.encryption.retiredKeys)")
 	}
 
-	var active []byte
+	if cfg.Enabled && cfg.Key == "" && !cfg.usesKMS() {
+		if len(retired) > 0 {
+			return keys, fmt.Errorf("storage.encryption.enabled needs storage.encryption.key or storage.encryption.kms.provider; storage.encryption.retiredKeys only opens what earlier keys sealed")
+		}
 
-	retiredKeys := make([][]byte, 0, len(retired)+1)
+		return keys, fmt.Errorf("storage.encryption.enabled needs storage.encryption.key (generate one with `openssl rand -base64 %d`) or storage.encryption.kms.provider", seal.KeyBytes)
+	}
 
 	if cfg.Key != "" {
 		key, err := seal.ParseKey(cfg.Key)
 		if err != nil {
-			return nil, fmt.Errorf("storage.encryption.key: %w", err)
+			return keys, fmt.Errorf("storage.encryption.key: %w", err)
 		}
 
 		if cfg.Enabled {
-			active = key
+			keys.active = key
 		} else {
-			retiredKeys = append(retiredKeys, key)
+			keys.retired = append(keys.retired, key)
 		}
-	}
-
-	if cfg.Enabled && active == nil {
-		return nil, fmt.Errorf("storage.encryption.enabled needs storage.encryption.key; storage.encryption.retiredKeys only opens what earlier keys sealed")
 	}
 
 	for i, encoded := range retired {
 		key, err := seal.ParseKey(encoded)
 		if err != nil {
-			return nil, fmt.Errorf("storage.encryption.retiredKeys entry %d: %w", i+1, err)
+			return keys, fmt.Errorf("storage.encryption.retiredKeys entry %d: %w", i+1, err)
 		}
 
-		retiredKeys = append(retiredKeys, key)
+		keys.retired = append(keys.retired, key)
 	}
 
-	ring, err := seal.NewKeyring(active, retiredKeys)
+	return keys, nil
+}
+
+// newKeyring builds a ring from keys, or nil when there are none - the default, which seals nothing
+// and opens nothing sealed.
+func newKeyring(keys configuredKeys) (*seal.Keyring, error) {
+	if keys.active == nil && len(keys.retired) == 0 {
+		return nil, nil
+	}
+
+	ring, err := seal.NewKeyring(keys.active, keys.retired)
 	if err != nil {
 		return nil, fmt.Errorf("storage.encryption: %w", err)
 	}
@@ -92,12 +135,266 @@ func keyringFromConfig(cfg encryptionConfig) (*seal.Keyring, error) {
 	return ring, nil
 }
 
+// keyringFromConfig builds the ring the configuration alone describes, without the store: no KMS
+// data key is in it.
+func keyringFromConfig(cfg encryptionConfig) (*seal.Keyring, error) {
+	keys, err := keysFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return newKeyring(keys)
+}
+
+// newKeyWrapper builds the KMS client. A variable so a test can stand a fake KMS in for one.
+var newKeyWrapper = kms.New
+
+// openKeyring builds the ring a store is opened with, checks it against the store's key ledger, and
+// hands it to the store. Every open that reads or writes bodies goes through it: the service, and
+// each offline mode.
+//
+// With a KMS configured it adds the store's data keys (kmsDataKeys), and, with encryption on, makes
+// one of them the active key - generating and wrapping it the first time. Then the check item 205
+// of TODO-3 asked for: a key the ledger names that the ring does not hold is refused (or warned
+// about, under storage.encryption.ledgerCheck) now, rather than surfacing as a failed read of
+// whichever row happens to be under it. Last, the active key is recorded, before the store seals
+// anything under it, which is what lets the next start make the same check.
+func openKeyring(ctx context.Context, database *db.DB, cfg encryptionConfig) (*seal.Keyring, error) {
+	log.Trace("func() openKeyring")
+
+	keys, err := keysFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.usesKMS() {
+		wrapper, err := newKeyWrapper(ctx, cfg.KMS)
+		if err != nil {
+			return nil, fmt.Errorf("storage.encryption.kms: %w", err)
+		}
+
+		dataKeys, err := kmsDataKeys(ctx, database, wrapper, cfg.Enabled)
+		if err != nil {
+			return nil, err
+		}
+
+		keys.active = dataKeys.active
+		keys.retired = append(keys.retired, dataKeys.retired...)
+	}
+
+	ring, err := newKeyring(keys)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := checkKeyLedger(ctx, database, ring, cfg.LedgerCheck); err != nil {
+		return nil, err
+	}
+
+	if ring.Active() != "" {
+		if err := database.RecordKey(ctx, ring.Active()); err != nil {
+			return nil, err
+		}
+	}
+
+	database.SetKeyring(ring)
+
+	return ring, nil
+}
+
+// dataKeyContext is the additional data a data key is wrapped with: its own id, so a wrapped key
+// copied onto another ledger row does not unwrap.
+func dataKeyContext(id string) []byte {
+	return []byte("hippocampus data key:" + id)
+}
+
+// kmsDataKeys unwraps the store's data keys. The active one, when sealing is on, is the oldest
+// undrained data key wrapped under the configured key-encryption key; the rest are held to open.
+//
+// A data key that will not unwrap is not held, and the ledger check then says so - unless it is
+// wrapped under the configured key-encryption key and sealing is on. That is refused outright,
+// because the alternative is generating a second data key every time the KMS has a bad moment.
+func kmsDataKeys(ctx context.Context, database *db.DB, wrapper kms.Wrapper, sealing bool) (configuredKeys, error) {
+	log.Trace("func() kmsDataKeys")
+
+	var keys configuredKeys
+
+	// Twice at most: a data key is generated only when the first pass finds none to seal under, and
+	// the second pass then picks whichever the ledger holds first - which, when two replicas
+	// generated one each at the same moment, is the same key for both.
+	for attempt := 0; attempt < 2; attempt++ {
+		keys = configuredKeys{}
+
+		entries, err := database.KeyLedger(ctx)
+		if err != nil {
+			return keys, fmt.Errorf("reading the store's KMS-wrapped data keys: %w", err)
+		}
+
+		for _, entry := range entries {
+			if entry.WrappedKey == nil || entry.Drained() {
+				continue
+			}
+
+			configured := entry.Provider == wrapper.Provider() && entry.KMSKey == wrapper.Key()
+
+			if entry.Provider != wrapper.Provider() {
+				log.Warnf("data key %s is wrapped by %s, not the configured %s, and is not held",
+					entry.KeyId,
+					entry.Provider,
+					wrapper.Provider(),
+				)
+
+				continue
+			}
+
+			dataKey, err := wrapper.Unwrap(ctx, entry.WrappedKey, entry.KMSKey, dataKeyContext(entry.KeyId))
+			if err == nil && seal.KeyID(dataKey) != entry.KeyId {
+				err = fmt.Errorf("it unwrapped to a different key than the ledger names")
+			}
+
+			if err != nil {
+				if configured && sealing {
+					return keys, fmt.Errorf("unwrapping data key %s with %s key %s: %w", entry.KeyId, entry.Provider, entry.KMSKey, err)
+				}
+
+				log.Warnf("data key %s (wrapped by %s key %s) did not unwrap, and is not held: %s",
+					entry.KeyId,
+					entry.Provider,
+					entry.KMSKey,
+					err.Error(),
+				)
+
+				continue
+			}
+
+			if configured && sealing && keys.active == nil {
+				keys.active = dataKey
+
+				continue
+			}
+
+			keys.retired = append(keys.retired, dataKey)
+		}
+
+		if !sealing || keys.active != nil {
+			break
+		}
+
+		if attempt == 0 {
+			if err := generateDataKey(ctx, database, wrapper); err != nil {
+				return keys, err
+			}
+		}
+	}
+
+	if sealing && keys.active == nil {
+		return keys, fmt.Errorf("no data key wrapped by %s key %s is in the store after generating one", wrapper.Provider(), wrapper.Key())
+	}
+
+	if sealing {
+		log.Infof("the active data key %s is wrapped by %s key %s", seal.KeyID(keys.active), wrapper.Provider(), wrapper.Key())
+	}
+
+	return keys, nil
+}
+
+// generateDataKey draws a data key, has the KMS wrap it, and records the wrapped form. The plain key
+// is not kept: kmsDataKeys unwraps it from the ledger like any other, so a key the KMS cannot give
+// back is found now rather than at the next start.
+func generateDataKey(ctx context.Context, database *db.DB, wrapper kms.Wrapper) error {
+	log.Trace("func() generateDataKey")
+
+	dataKey := make([]byte, seal.KeyBytes)
+
+	// crypto/rand.Read does not fail on any supported platform; the check is for the signature.
+	if _, err := rand.Read(dataKey); err != nil {
+		return fmt.Errorf("drawing a data key: %w", err)
+	}
+
+	id := seal.KeyID(dataKey)
+
+	wrapped, err := wrapper.Wrap(ctx, dataKey, dataKeyContext(id))
+	if err != nil {
+		return fmt.Errorf("wrapping a new data key: %w", err)
+	}
+
+	log.Infof("generated data key %s, wrapped by %s key %s", id, wrapper.Provider(), wrapper.Key())
+
+	return database.RecordWrappedKey(ctx, db.KeyLedgerEntry{
+		KeyId:      id,
+		Provider:   wrapper.Provider(),
+		KMSKey:     wrapper.Key(),
+		WrappedKey: wrapped,
+	})
+}
+
+// checkKeyLedger compares a ring against the keys the store's ledger says rows may be sealed under.
+//
+// A read-only tool opening a store an older build last migrated finds no ledger, and makes no
+// check: there is nothing to check against, and the reads that follow fail on a missing key as they
+// always did.
+func checkKeyLedger(ctx context.Context, database *db.DB, ring *seal.Keyring, policy string) error {
+	log.Trace("func() checkKeyLedger")
+
+	if !database.KeyLedgerAvailable() {
+		log.Debug("the store has no key ledger yet, so the keys it holds rows under are not checked")
+
+		return nil
+	}
+
+	entries, err := database.KeyLedger(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the key ledger: %w", err)
+	}
+
+	var missing []string
+
+	for _, entry := range entries {
+		if entry.Drained() || ring.Holds(entry.KeyId) {
+			continue
+		}
+
+		missing = append(missing, entry.KeyId)
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	problem := fmt.Sprintf("the store holds rows sealed under %d key(s) this configuration does not hold (%s), and every one of those rows will fail to read. Add the key to storage.encryption.key or storage.encryption.retiredKeys, or give the service access to the KMS key that wrapped it; if the key is lost for good, storage.encryption.ledgerCheck \"warn\" starts without it",
+		len(missing),
+		strings.Join(missing, ", "),
+	)
+
+	if policy == "warn" {
+		log.Warn(problem)
+
+		return nil
+	}
+
+	return errors.New(problem)
+}
+
 // encryptionProblems checks the storage.encryption.* keys, for storeProblems.
 func encryptionProblems() []error {
 	var problems []error
 
-	if _, err := keyringFromConfig(encryptionConfigFromViper()); err != nil {
+	cfg := encryptionConfigFromViper()
+
+	if _, err := keyringFromConfig(cfg); err != nil {
 		problems = append(problems, err)
+	}
+
+	if cfg.usesKMS() {
+		problems = append(problems, cfg.KMS.Problems()...)
+	}
+
+	// Unset reads as the default, refuse, which is what checkKeyLedger does with anything but warn.
+	if cfg.LedgerCheck != "" && !slices.Contains(ledgerCheckPolicies, cfg.LedgerCheck) {
+		problems = append(problems, fmt.Errorf("storage.encryption.ledgerCheck '%s' is not one of %s",
+			cfg.LedgerCheck,
+			strings.Join(ledgerCheckPolicies, ", "),
+		))
 	}
 
 	// contentIndexSetting already drops the index under encryption; this refuses the configuration
@@ -161,16 +458,18 @@ type reencryptConfig struct {
 // still holds the bytes that were read, so a row written meanwhile is left as it was written. The
 // open is not a consolidating one, for the reason rebuildContentSearch gives.
 func runReencrypt(cfg reencryptConfig) error {
-	ring, err := keyringFromConfig(cfg.Encryption)
-	if err != nil {
+	if !cfg.Encryption.Enabled {
+		return fmt.Errorf("--reencrypt needs storage.encryption.enabled and storage.encryption.key or storage.encryption.kms.provider: there is no key to re-encrypt under")
+	}
+
+	if _, err := keysFromConfig(cfg.Encryption); err != nil {
 		return err
 	}
 
-	if ring.Active() == "" {
-		return fmt.Errorf("--reencrypt needs storage.encryption.enabled and storage.encryption.key: there is no key to re-encrypt under")
-	}
-
-	var database *db.DB
+	var (
+		database *db.DB
+		err      error
+	)
 
 	opts := contentIndexOptions(!cfg.NoContentIndex)
 
@@ -196,13 +495,18 @@ func runReencrypt(cfg reencryptConfig) error {
 
 	defer func() { _ = database.Close() }()
 
-	database.SetKeyring(ring)
+	ctx := context.Background()
+
+	ring, err := openKeyring(ctx, database, cfg.Encryption)
+	if err != nil {
+		return err
+	}
 
 	log.Infof("re-encrypting every memory body and queued callback not sealed under key %s", ring.Active())
 
 	started := time.Now()
 
-	stats, err := database.ReencryptBodies(context.Background())
+	stats, err := database.ReencryptBodies(ctx)
 	if err != nil {
 		return fmt.Errorf("re-encryption stopped after %d memories (it is safe to rerun): %w", stats.Memories, err)
 	}
@@ -213,6 +517,19 @@ func runReencrypt(cfg reencryptConfig) error {
 		time.Since(started).Round(time.Millisecond),
 		stats.Skipped,
 	)
+
+	// What lets a retired key come out of the configuration: the ledger stops asking for a key once
+	// no row is under it.
+	drained, err := database.DrainKeys(ctx, ring.Active())
+	if err != nil {
+		return fmt.Errorf("re-encryption finished, but the key ledger was not updated (it is safe to rerun): %w", err)
+	}
+
+	if len(drained) > 0 {
+		log.Infof("no row is sealed under key(s) %s any more; they can be removed from the configuration (keep them wherever an older backup or archive may be restored)",
+			strings.Join(drained, ", "),
+		)
+	}
 
 	return nil
 }

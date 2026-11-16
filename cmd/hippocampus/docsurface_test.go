@@ -59,6 +59,7 @@ var nonInstrumentNames = map[string]string{
 	"hippocampus.v1":       "the proto package, as it appears in a fully qualified method name",
 	"hippocampus_pb2":      "a generated Python module in the client-codegen walkthrough",
 	"hippocampus_pb2_grpc": "as above",
+	"hippocampus_data_key": "the AWS KMS encryption-context key a wrapped data key is bound to (seal/kms)",
 }
 
 // fileNameSuffixes are the extensions that make a dotted `hippocampus.x` token a file rather than a

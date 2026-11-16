@@ -35,6 +35,7 @@ func TestMigrationVersionsAreStable(t *testing.T) {
 		16: "callback_payload_bytes",
 		17: "significance_level_unused",
 		18: "body_encryption",
+		19: "key_ledger",
 	}
 
 	migrations := (&DB{driver: driverSQLite}).migrations()

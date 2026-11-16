@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/fastbean-au/hippocampus/db"
-	"github.com/fastbean-au/hippocampus/seal"
 )
 
 // warnIfOverCapacity reports a store that is already past its byte capacity target as the service
@@ -120,10 +119,9 @@ type storeConfig struct {
 	CompressionEnabled  bool
 	CompressionMinBytes int
 
-	// Encryption is the storage.encryption.* block, from which run builds Keyring with
-	// keyringFromConfig before the store is opened.
+	// Encryption is the storage.encryption.* block, from which initStore builds the store's ring
+	// with openKeyring once the store is open: a KMS-backed ring's keys are kept in the store.
 	Encryption encryptionConfig
-	Keyring    *seal.Keyring
 
 	// OpenSearch is opensearch.enabled, read here only to say at startup that the cluster holds a
 	// plaintext copy of what the store seals.
@@ -147,6 +145,10 @@ func setStoreDefaults() {
 	// Off, because before it the service sealed nothing. The two keys take no default, as no
 	// secret does: there is no value the service could default one to that would be secret.
 	viper.SetDefault("storage.encryption.enabled", false)
+
+	// Refuse, because a ring missing a key the store holds rows under is a configuration that lost
+	// something, and the start is the moment that costs least to find out (TODO-3 item 205).
+	viper.SetDefault("storage.encryption.ledgerCheck", "refuse")
 
 	// Off, because before it the service rebuilt nothing. The two bounds match
 	// HippocampusIndexBloated's, so with rebuilds on that alert fires only for an index the
@@ -314,9 +316,16 @@ func initStore(cfg storeConfig) (*db.DB, error) {
 
 	// Seal bodies at rest, after compression. Like compression it governs writes only: each row
 	// records the key it was sealed under, so a ring holding the retired keys reads every row
-	// whatever it was written with.
-	database.SetKeyring(cfg.Keyring)
-	logEncryption(cfg.Keyring, cfg.OpenSearch)
+	// whatever it was written with. The ring is checked against the store's key ledger here, before
+	// the store serves, so a key the configuration lost stops the start rather than a read.
+	ring, err := openKeyring(context.Background(), database, cfg.Encryption)
+	if err != nil {
+		_ = database.Close()
+
+		return nil, err
+	}
+
+	logEncryption(ring, cfg.OpenSearch)
 
 	// The forgotten log: a record of what the sleep cycle deleted, and why. Off by default, and
 	// bounded when on - an unbounded log inside the store it describes would consume the headroom

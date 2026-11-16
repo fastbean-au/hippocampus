@@ -548,13 +548,30 @@ const STEPS = [
             help: "Seals memory bodies, queued callback payloads and export archives with AES-256-GCM, so a copied database file, a dump or an archive gives nothing away. Ids, groups, event names, links and metadata stay readable — queries need them. Drops the store's own content index, a plaintext copy of every body, so keyword search needs OpenSearch. Rows record their key, so it is safe to enable or disable on a live store; run --reencrypt to seal rows written before.",
           },
           {
+            key: "storage.encryption.kms.provider",
+            label: "Key management service",
+            type: "select",
+            def: "",
+            svc: "",
+            when: (s) => value(s, "storage.encryption.enabled"),
+            options: [
+              ["", "none — the key below"],
+              ["aws", "aws — AWS KMS"],
+              ["gcp", "gcp — Google Cloud KMS"],
+              ["vault", "vault — Vault transit"],
+            ],
+            help: "With a KMS, the store generates its own data key, keeps it only wrapped by your KMS key, and has the KMS unwrap it at each start: the key that opens the store never leaves the KMS, the configuration holds no secret that does, and revoking the service's access revokes the store's from the next start. Without one, the key below is the key.",
+          },
+          {
             key: "storage.encryption.key",
             label: "Encryption key",
             type: "text",
             def: "",
             secret: true,
             generate: 32,
-            when: (s) => value(s, "storage.encryption.enabled"),
+            when: (s) =>
+              value(s, "storage.encryption.enabled") &&
+              value(s, "storage.encryption.kms.provider") === "",
             help: "32 random bytes, base64. Generate one here, or with `openssl rand -base64 32`, and inject it as HIPPOCAMPUS_STORAGE_ENCRYPTION_KEY rather than writing it into config.json. Lose it and every sealed body is lost with it — keep a copy somewhere the store is not.",
           },
           {
@@ -565,6 +582,50 @@ const STEPS = [
             secret: true,
             when: (s) => value(s, "storage.encryption.enabled"),
             help: "Earlier keys, comma-separated, that still open rows sealed before a rotation. New writes use the key above. Once --reencrypt has rewritten everything under the new key, a retired key can be removed.",
+          },
+          {
+            key: "storage.encryption.kms.keyId",
+            label: "KMS key",
+            type: "text",
+            def: "",
+            when: (s) =>
+              value(s, "storage.encryption.enabled") &&
+              value(s, "storage.encryption.kms.provider") !== "",
+            help: "The key-encryption key. AWS: a key or alias ARN (its region is taken from the ARN), an alias or a key id. Google Cloud: projects/…/locations/…/keyRings/…/cryptoKeys/…. Vault: the transit mount and key, such as transit/hippocampus. Changing it later generates a new data key under the new one; rows under the old one go on reading while the service can still use the old key.",
+          },
+          {
+            key: "storage.encryption.kms.endpoint",
+            label: "KMS endpoint",
+            type: "text",
+            def: "",
+            when: (s) =>
+              value(s, "storage.encryption.enabled") &&
+              value(s, "storage.encryption.kms.provider") !== "",
+            help: "Vault's address, which it needs, such as https://vault.internal:8200. For AWS and Google Cloud leave it empty unless you use a private endpoint or an emulator.",
+          },
+          {
+            key: "storage.encryption.kms.token",
+            label: "KMS token",
+            type: "text",
+            def: "",
+            secret: true,
+            when: (s) =>
+              value(s, "storage.encryption.enabled") &&
+              ["gcp", "vault"].includes(value(s, "storage.encryption.kms.provider")),
+            help: "Vault: a token whose policy allows encrypt and decrypt on the transit key, which it needs. Google Cloud: an access token in place of the application default credentials, normally left empty. AWS takes its credentials from the SDK's default chain (environment, shared config, instance or task role) and never this. Inject it as HIPPOCAMPUS_STORAGE_ENCRYPTION_KMS_TOKEN.",
+          },
+          {
+            key: "storage.encryption.ledgerCheck",
+            label: "Key ledger check",
+            type: "select",
+            def: "refuse",
+            svc: "refuse",
+            when: (s) => value(s, "storage.encryption.enabled"),
+            options: [
+              ["refuse", "refuse — do not start"],
+              ["warn", "warn — start, and fail those rows as they are read"],
+            ],
+            help: "The store keeps a ledger of every key a row has been sealed under, and each start checks the configured keys against it. Refusing finds a lost or mistyped key at deploy time instead of at the first read of a row under it. Warn is for a key that is gone for good.",
           },
         ],
       },

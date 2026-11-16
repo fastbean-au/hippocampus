@@ -136,6 +136,7 @@ func resetTestStore(t *testing.T, d *DB) {
 		tombstonesTable,
 		searchOutboxTable,
 		callbackQueueTable,
+		keyLedgerTable,
 	}
 
 	if d.instanceTable {

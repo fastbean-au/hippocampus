@@ -15,8 +15,9 @@
 // is used exactly once, so there is no count of seals after which a random nonce starts to repeat -
 // and it costs 33 bytes a value: a version byte, the 16-byte salt and GCM's 16-byte tag. Wrapping a
 // random data key under the configured one (envelope encryption in the KMS sense) would buy nothing
-// more while the configured key lives in the process: its value is that the key-encryption key can
-// stay in a KMS, which is a different deployment from this one.
+// more while the configured key lives in the process. Its value is that the key-encryption key can
+// stay in a KMS, and that deployment is the kms subpackage's: there the key this package is handed
+// is a data key the KMS unwrapped, and this package neither knows nor needs to.
 package seal
 
 import (

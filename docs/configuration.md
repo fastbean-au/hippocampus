@@ -214,6 +214,11 @@ the service's own key reads, so a key cannot be added without a row; regenerate 
 | `storage.driver` | `"sqlite"` | Driver | [Storage](#storage) |
 | `storage.encryption.enabled` | `false` | Encrypt memory bodies | [Encryption at rest](#encryption-at-rest) |
 | `storage.encryption.key` | — | Encryption key | [Encryption at rest](#encryption-at-rest) |
+| `storage.encryption.kms.endpoint` | — | KMS endpoint | [Encryption at rest](#encryption-at-rest) |
+| `storage.encryption.kms.keyId` | — | KMS key | [Encryption at rest](#encryption-at-rest) |
+| `storage.encryption.kms.provider` | `""` | Key management service | [Encryption at rest](#encryption-at-rest) |
+| `storage.encryption.kms.token` | — | KMS token | [Encryption at rest](#encryption-at-rest) |
+| `storage.encryption.ledgerCheck` | `"refuse"` | Key ledger check | [Encryption at rest](#encryption-at-rest) |
 | `storage.encryption.retiredKeys` | — | Retired keys | [Encryption at rest](#encryption-at-rest) |
 | `storage.indexRebuild.enabled` | `false` | Rebuild bloated indexes | [Storage](#storage) |
 | `storage.indexRebuild.maxBytesPerEntry` | `512` | Rebuild past (bytes per entry) | [Storage](#storage) |
@@ -1678,6 +1683,80 @@ the service stopped. On PostgreSQL and MySQL it may run beside live instances: a
 it runs is left as that write left it. Even after it runs, a body's old plaintext can survive in
 free pages, WAL segments and dead tuples until the database reclaims them. SQLite's `VACUUM` and
 PostgreSQL's `VACUUM FULL` reclaim them at once.
+
+##### The key ledger
+
+The store keeps a ledger of every key a body or a queued callback has been sealed under: one row per
+key, never per memory. Every instance records its active key there before it seals anything with it,
+and every start checks the configured keys against the ledger. A key the ledger names that the
+configuration does not hold is reported **at startup**, by id, instead of as a failed read of
+whichever row happens to be under it, perhaps weeks later.
+
+`storage.encryption.ledgerCheck` (**default `refuse`**) decides what that start does:
+
+- **`refuse`** — the service does not start. A mistyped key, a retired key removed too early or a
+  KMS key the service has lost access to is found at deploy time.
+- **`warn`** — the service starts, logs the missing ids, and every row under them fails as it is
+  read. Use it only for a key that is gone for good.
+
+`--reencrypt` is what takes a key out of the check. Once a run has moved every row off a retired
+key, it marks the key **drained** and logs its id, and from then on the key can be removed from the
+configuration. A store upgraded to this release seeds its ledger on the first start, with one scan
+of both sealed columns.
+
+##### A key management service
+
+`storage.encryption.kms.provider` (**default unset**) replaces `storage.encryption.key` with a key that
+never leaves a key management service: `aws` (AWS KMS), `gcp` (Google Cloud KMS) or `vault`
+(Vault's transit engine). On its first start the store generates a random 32-byte **data key**, has
+the KMS wrap it under `storage.encryption.kms.keyId`, and keeps only the wrapped form, in the key
+ledger. Each start after that, the KMS unwraps it. The configuration holds no secret that opens the
+store, and revoking the service's access to the KMS key revokes its access to every sealed row from
+the next start.
+
+```json
+"storage": {
+  "encryption": {
+    "enabled": true,
+    "kms": {
+      "provider": "aws",
+      "keyId": "arn:aws:kms:ap-southeast-2:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    }
+  }
+}
+```
+
+| Provider | `kms.keyId`                                                    | Credentials                                                                                 |
+| :------- | :------------------------------------------------------------- | :------------------------------------------------------------------------------------------ |
+| `aws`    | a key or alias ARN, an alias (`alias/hippocampus`) or a key id | the SDK's default chain: environment, shared config, instance or task role                  |
+| `gcp`    | `projects/…/locations/…/keyRings/…/cryptoKeys/…`               | application default credentials, or an access token in `kms.token`                          |
+| `vault`  | the transit mount and key, such as `transit/hippocampus`       | a token in `kms.token` with `update` on the key's `encrypt` and `decrypt` paths             |
+
+- **`storage.encryption.kms.keyId`** names the key-encryption key. With `aws`, an ARN also names
+  the region; an alias or key id takes the region from `AWS_REGION`. A Vault mount may contain
+  slashes, such as a namespace (`ns1/transit/hippocampus`), so the key is the part after the last one.
+- **`storage.encryption.kms.endpoint`** is Vault's address, which `vault` needs. For `aws` and `gcp`,
+  leave it unset unless you use a private endpoint or an emulator.
+- **`storage.encryption.kms.token`** is a secret. Inject it as
+  `HIPPOCAMPUS_STORAGE_ENCRYPTION_KMS_TOKEN`.
+
+The service needs `kms:Encrypt` and `kms:Decrypt` on an AWS key, `cloudkms.cryptoKeyVersions.useToEncrypt`
+and `useToDecrypt` on a Google Cloud key (the *CryptoKey Encrypter/Decrypter* role), and a policy
+allowing `update` on `transit/encrypt/<key>` and `transit/decrypt/<key>` in Vault. Each data key is
+wrapped bound to its own id: the AWS encryption context `hippocampus_data_key`, Google Cloud's
+additional authenticated data, or Vault's `associated_data`, which needs an AEAD key type such as
+transit's default, `aes256-gcm96`.
+
+`kms.provider` and `storage.encryption.key` cannot both be set while encryption is on, since both
+would name the key new bodies are sealed under. To move a store from a configured key to a KMS, put
+the key in `storage.encryption.retiredKeys`, set the provider, restart, and run `--reencrypt`.
+Changing `kms.keyId` works the same way, with the old KMS key as the "retired" one: the next start
+generates a new data key under the new KMS key, and data keys under the old one go on unwrapping
+for as long as the service can still use the old KMS key. Rotation inside the KMS (AWS automatic
+rotation, a new Vault key version) needs nothing from the service.
+
+A KMS that is unreachable at startup stops the start, as a missing key would. The service never
+generates a second data key because the KMS failed to give back the first.
 
 #### Index rebuilds
 

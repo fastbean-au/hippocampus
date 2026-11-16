@@ -56,6 +56,11 @@ func (d *DB) SetKeyring(keyring *seal.Keyring) {
 	d.keyring = keyring
 }
 
+// Keyring returns the ring SetKeyring set, which the archive path seals and opens with too.
+func (d *DB) Keyring() *seal.Keyring {
+	return d.keyring
+}
+
 // encodeBody turns a memory body into what is stored for it: compressed by the compression policy,
 // then sealed under the active key, if there is one. A binary body is sealed like any other - it is
 // skipped by compression because it may already be compressed, which says nothing about whether it

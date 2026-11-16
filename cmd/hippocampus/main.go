@@ -420,11 +420,6 @@ func run(ctx context.Context, version versionInfo) error {
 
 	storeCfg := storeConfigFromViper()
 
-	storeCfg.Keyring, err = keyringFromConfig(storeCfg.Encryption)
-	if err != nil {
-		return err
-	}
-
 	database, err := initStore(storeCfg)
 	if err != nil {
 		return err
@@ -506,7 +501,7 @@ func run(ctx context.Context, version versionInfo) error {
 		Summariser: summariser,
 		Embedder:   embedder,
 		Notifier:   notifier,
-		Keyring:    storeCfg.Keyring,
+		Keyring:    database.Keyring(),
 		Version:    version.Version,
 	}, serverConfig(authMethod))
 

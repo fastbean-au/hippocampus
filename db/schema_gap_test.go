@@ -299,6 +299,11 @@ func TestServerSchemaInitFailuresStopTheRun(t *testing.T) {
 
 			mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
 		},
+		"key_ledger": func(mock sqlmock.Sqlmock, _ driver) {
+			// The probe finds no ledger, so the build starts, and its first statement fails.
+			mock.ExpectQuery(`SELECT 1 FROM ` + keyLedgerTable).WillReturnError(errors.New("does not exist"))
+			mock.ExpectExec(`DROP TABLE IF EXISTS ` + keyLedgerBuildTable).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, dialect := range serverDialects {

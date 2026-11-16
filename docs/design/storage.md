@@ -148,8 +148,8 @@ failure, which does not. Each value is sealed under its own key, derived by HKDF
 key and a 16-byte random salt, which removes the AES-GCM random-nonce budget from the question at 33
 bytes a row. That is deliberately not envelope encryption in the KMS sense (a random data key
 wrapped by the configured one): wrapping buys nothing while the key-encryption key lives in the
-process, and its real value, a key-encryption key that never leaves a KMS, is a different
-deployment. A body's additional data is its memory id, so a sealed body moved onto another row by
+process. Its real value, a key-encryption key that never leaves a KMS, is `storage.encryption.kms.*`
+(TODO-3 item 205; below). A body's additional data is its memory id, so a sealed body moved onto another row by
 someone who can write the table but lacks the key fails to open. The column is a **core column**
 (migration 2), not migration 18's, for a reason that broke the first attempt: migrations 12 and 14
 populate the content index by reading bodies through the scanners, which now select
@@ -168,6 +168,32 @@ archive's own gzip, and `Import` tells a sealed archive from a gzip one by its f
 written before encryption, or under a retired key, are moved by `--reencrypt` (`ReencryptBodies`),
 which rewrites a row only if it still holds exactly the bytes it read, so it is safe beside a live
 instance on a server dialect.
+
+**The key ledger and the KMS** (`db/keyledger.go`, `seal/kms`, `openKeyring` in
+`cmd/hippocampus/encryption.go`; TODO-3 item 205). A per-row key id says which key a row needs only
+when that row is read, so a lost retired key used to surface weeks after the deploy that lost it.
+`encryption_keys` (migration 19) holds one row per key ever sealed under, not per memory. Every
+instance records its active key before sealing with it, and every open checks its ring against the
+ledger, refusing under `storage.encryption.ledgerCheck: refuse` (the default) or warning under
+`warn`. `--reencrypt` ends with `DrainKeys`, which marks drained every key no row is under. It finds
+those keys with a scan of both sealed columns rather than trusting the run's own count, because a
+live replica on an older configuration may have written under the old key meanwhile. Recording an
+active key undrains it. The migration seeds the ledger from the same scan, which has no index to
+stay on and so must run once. It therefore needs a completion trace (schema.go requires one). The
+ledger is built as `encryption_keys_build` and renamed into place, so an interrupted seeding leaves
+no ledger and is redone. A ledger that existed but had missed a key would pass a ring that cannot
+read the store, which is worse than having none. The table probe is a no-row SELECT, the same probe
+`checkReadOnlyTables` uses, so no new dialect knowledge is needed. With a KMS, the same table holds
+the store's data keys: one random 32-byte key, wrapped under `kms.keyId` and bound to its own id as
+additional data, is the active key, and the KMS unwraps it at every open. The ring is otherwise
+unchanged: a data key is just another key, and `seal` never learns where it came from. Two rules
+carry the design. (1) A data key under the configured key-encryption key that will not unwrap stops
+a sealing start. Generating a fresh key instead would mint one more data key per KMS outage, each
+needed forever after. (2) Two replicas that both find no data key each generate one, then re-read
+the ledger and take the oldest, so they converge on one key; the loser's key stays in the ledger,
+held and unused. The providers are AWS KMS through the SDK the S3 store already brings, and Google
+Cloud KMS and Vault transit over their REST APIs. Cloud KMS's client library would bring a gRPC
+dependency tree larger than the rest of the service's, all for two calls.
 
 ## `db/link.go`
 

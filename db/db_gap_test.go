@@ -359,6 +359,10 @@ func TestInitSchema_MigrationFailuresStopTheRun(t *testing.T) {
 		"body_encryption": func(mock sqlmock.Sqlmock) {
 			mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
 		},
+		"key_ledger": func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery(`SELECT 1 FROM ` + keyLedgerTable).WillReturnError(errors.New("no such table"))
+			mock.ExpectExec(`DROP TABLE IF EXISTS ` + keyLedgerBuildTable).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, migration := range (&DB{driver: driverSQLite}).migrations() {

@@ -964,6 +964,12 @@ func expectFreshMigration(t *testing.T, mock sqlmock.Sqlmock, d driver, name str
 		// carries the column, for the reason significance_level_unused gives.
 		expectColumnPresent(mock, d)
 
+	case "key_ledger":
+		// The ledger's own probe, which on a store that already has it is the whole of the step:
+		// the seeding scan runs only while the table is being built.
+		mock.ExpectQuery(`SELECT 1 FROM ` + keyLedgerTable + ` WHERE 1 = 0`).
+			WillReturnRows(sqlmock.NewRows([]string{"1"}))
+
 	default:
 		t.Fatalf("expectFreshMigration has no script for migration %q", name)
 

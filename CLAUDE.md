@@ -77,7 +77,7 @@ The long form of every command, with its design notes, is [docs/design/tooling.m
 | `summarise/`, `embed/` | the optional LLM summariser and embedder (Ollama or OpenAI-compatible) | [llm](docs/design/llm.md) |
 | `archive/` | the export archive format and the object stores (S3 or a directory) | [archive](docs/design/archive.md) |
 | `auth/` | token verification, the tier policy table, group scope claims | [auth](docs/design/auth.md) |
-| `seal/` | encryption at rest: the key ring, sealed values (bodies, callback payloads), sealed archive streams | [storage](docs/design/storage.md) |
+| `seal/`, `seal/kms/` | encryption at rest: the key ring, sealed values (bodies, callback payloads), sealed archive streams; KMS-wrapped data keys (AWS, Google Cloud, Vault) | [storage](docs/design/storage.md) |
 | `notify/` | the outbound callback sink (HTTP, signed) behind `callbacks.*` | [consolidation](docs/design/consolidation.md) |
 | `ratelimit/` | the token-bucket hierarchy behind `rateLimit.*` | - |
 | `stats/` | the periodic count log line and count gauges | [service](docs/design/service.md) |

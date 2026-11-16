@@ -322,6 +322,7 @@ Kubernetes secrets rather than committing them to `config.json`. The ones that m
 | Callback signing secret            | `HIPPOCAMPUS_CALLBACKS_SIGNINGSECRET`        |
 | Storage encryption key             | `HIPPOCAMPUS_STORAGE_ENCRYPTION_KEY`         |
 | Retired storage encryption keys    | `HIPPOCAMPUS_STORAGE_ENCRYPTION_RETIREDKEYS` |
+| KMS token (Vault, or Google Cloud) | `HIPPOCAMPUS_STORAGE_ENCRYPTION_KMS_TOKEN`   |
 
 A test holds this table to the code: every key the service reads whose name says it is a credential
 must have a row here.
