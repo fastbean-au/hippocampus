@@ -63,6 +63,13 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Security
+
+- **Two CodeQL findings in 0.54.0 fixed.** The TypeScript client's gateway transport trimmed a base
+  URL's trailing slashes with a regular expression that took quadratic time over a long run of
+  slashes; it now walks the string. `seal` refuses a plaintext whose sealed size would overflow an
+  int (`ErrTooLarge`) rather than allocating from a wrapped length.
+
 ## [0.54.0] - 2026-11-16
 
 ### Added

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"math"
 	"testing"
 )
 
@@ -462,5 +463,17 @@ func TestWriteAfterCloseFails(t *testing.T) {
 
 	if err := w.Close(); err != nil {
 		t.Errorf("a second Close: %s", err)
+	}
+}
+
+func TestSealedCapacityRefusesAnOverflowingLength(t *testing.T) {
+	t.Parallel()
+
+	if got, err := sealedCapacity(10); err != nil || got != 10+valueOverhead {
+		t.Errorf("sealedCapacity(10) = %d, %v; want %d, nil", got, err, 10+valueOverhead)
+	}
+
+	if _, err := sealedCapacity(math.MaxInt - valueOverhead + 1); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("a length that overflows the sealed size: got %v, want ErrTooLarge", err)
 	}
 }

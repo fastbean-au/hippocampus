@@ -31,6 +31,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -63,6 +64,9 @@ var ErrUnknownKey = errors.New("sealed under a key that is not configured")
 // ErrTampered is returned when a sealed value or stream fails authentication: it was altered, it was
 // truncated, or it was sealed for a different context than the one it is being opened in.
 var ErrTampered = errors.New("sealed data failed authentication")
+
+// ErrTooLarge is returned by Seal for a plaintext so long that its sealed size would overflow an int.
+var ErrTooLarge = errors.New("too large to seal")
 
 // Keyring is the set of keys the service seals and opens with. A nil *Keyring is valid and is the
 // zero configuration: it seals nothing, and opens only what was never sealed.
@@ -225,12 +229,27 @@ func (k *Keyring) Seal(plaintext []byte, context []byte) ([]byte, string, error)
 		return nil, "", err
 	}
 
-	sealed := make([]byte, 0, len(plaintext)+valueOverhead)
+	size, err := sealedCapacity(len(plaintext))
+	if err != nil {
+		return nil, "", err
+	}
+
+	sealed := make([]byte, 0, size)
 	sealed = append(sealed, valueVersion)
 	sealed = append(sealed, salt...)
 	sealed = aead.Seal(sealed, nonce, plaintext, context)
 
 	return sealed, k.active, nil
+}
+
+// sealedCapacity is the size of a sealed value whose plaintext is n bytes, refusing one whose size
+// would overflow an int rather than allocating from a wrapped length.
+func sealedCapacity(n int) (int, error) {
+	if n > math.MaxInt-valueOverhead {
+		return 0, fmt.Errorf("a %d-byte value: %w", n, ErrTooLarge)
+	}
+
+	return n + valueOverhead, nil
 }
 
 // Open reverses Seal. An empty id is a value that was never sealed, returned as stored; any other id

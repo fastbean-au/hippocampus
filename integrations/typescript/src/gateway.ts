@@ -32,6 +32,18 @@ export interface GatewayTransportOptions extends CallIdentity {
   interceptors?: Interceptor[];
 }
 
+// trimTrailingSlashes drops every "/" that ends s. It walks back from the end rather than using
+// /\/+$/, which backtracks to quadratic time over a long run of slashes that does not end the string.
+function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+
+  while (end > 0 && s[end - 1] === "/") {
+    end--;
+  }
+
+  return s.slice(0, end);
+}
+
 // createGatewayTransport returns a Connect transport that speaks the service's JSON gateway instead
 // of gRPC, so the generated client works unchanged in a browser, a worker, Deno, or any host that
 // can fetch but cannot open an HTTP/2 connection. It is the same split the CLI makes with its
@@ -41,7 +53,7 @@ export interface GatewayTransportOptions extends CallIdentity {
 // failure as {"code": <grpc code>, "message": ...} - so a caller branching on Code.NotFound branches
 // the same way on either transport.
 export function createGatewayTransport(options: GatewayTransportOptions): Transport {
-  const baseUrl = options.baseUrl.replace(/\/+$/, "");
+  const baseUrl = trimTrailingSlashes(options.baseUrl);
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const interceptors = [identityInterceptor(options), ...(options.interceptors ?? [])];
 

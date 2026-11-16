@@ -180,3 +180,19 @@ test("a timeout aborts the fetch as DeadlineExceeded", async () => {
 
   await assert.rejects(client.whoAmI({}), (err: unknown) => err instanceof ConnectError && err.code === Code.DeadlineExceeded);
 });
+
+test("a base URL's trailing slashes are trimmed in linear time", async () => {
+  const seen: Seen[] = [];
+  const client = createHippocampusClient(
+    createGatewayTransport({ baseUrl: "http://gateway:8080///", fetch: fakeFetch(200, { id: "m1" }, seen) }),
+  );
+
+  await client.storeMemory({ body: "b", significance: 1 });
+  assert.ok(seen[0].url.startsWith("http://gateway:8080/v1/"), seen[0].url);
+
+  // A run of slashes that does not end the string is the input a backtracking /\/+$/ takes
+  // quadratic time over.
+  const started = performance.now();
+  createGatewayTransport({ baseUrl: "http://gateway:8080" + "/".repeat(100_000) + "x", fetch: fakeFetch(200, {}, []) });
+  assert.ok(performance.now() - started < 1000, "trimming the base URL took over a second");
+});
