@@ -46,20 +46,26 @@ const (
 )
 
 func main() {
-	os.Exit(realMain(os.Args[1:]))
+	// The signal handler is installed here, once per process, and never in realMain. Tests drive
+	// realMain many times in one process, and installing and tearing down os/signal's process-wide
+	// handler on every call is what tripped a runtime fatal ("signal_recv: inconsistent state") in
+	// the broker bridges under -race (TODO-3 item 148).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := realMain(ctx, os.Args[1:])
+
+	stop()
+	os.Exit(code)
 }
 
-// realMain is the testable body of main: it registers flags, installs the signal handler and runs
-// serve, returning an exit code rather than calling os.Exit itself.
-func realMain(args []string) int {
+// realMain is the testable body of main: it registers flags and runs serve on the given context
+// (main supplies one cancelled by SIGINT/SIGTERM), returning an exit code rather than calling
+// os.Exit itself so tests can drive every branch.
+func realMain(ctx context.Context, args []string) int {
 	if err := registerFlags(pflag.CommandLine, args); err != nil {
 		log.Errorf("failed to register command line flags: %s", err.Error())
 
 		return 1
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// A cancelled context is how a SIGINT/SIGTERM arrives, which is an ordinary shutdown rather
 	// than a failure - reporting it as one would make every restart look like a crash.

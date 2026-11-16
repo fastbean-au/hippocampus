@@ -135,9 +135,11 @@ jobs:
       # including cmd/; the separate integration modules (integrations/mcp, otel, eventsource) are
       # tested in their own jobs and not reported here. Only the generated protobuf/gateway code
       # (contract/hippocampus*.pb*.go and *_grpc.pb.go) is filtered out, because coverage of
-      # generated getters is noise rather than a signal about our code - and so is db/dbtest, the
-      # test-support opener, which only ever runs inside OTHER packages' tests and so always reads as
-      # untested to a coverage profile that credits the package under test.
+      # generated getters is noise rather than a signal about our code - and so are db/dbtest and
+      # internal/flagdocs, test helpers that only ever run inside OTHER packages' tests and so always
+      # read as untested to a coverage profile that credits the package under test, and
+      # examples/go/quickstart, which the examples job runs against a live service. Keep the pattern
+      # the same as hooks/pre-commit's.
       - name: Report coverage to Coveralls
         if: github.event_name == 'push'
         env:
@@ -145,7 +147,7 @@ jobs:
           COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
         run: |
           for profile in coverage coverage-postgres coverage-mysql; do
-            grep -vE '/contract/hippocampus[^/]*\.go:|/db/dbtest/' "$profile.out" > "$profile.filtered.out"
+            grep -vE '/contract/hippocampus[^/]*\.go:|/db/dbtest/|/internal/flagdocs/|/examples/go/quickstart/' "$profile.out" > "$profile.filtered.out"
           done
           go install github.com/mattn/goveralls@latest
           goveralls -coverprofile=coverage.filtered.out,coverage-postgres.filtered.out,coverage-mysql.filtered.out -service=github

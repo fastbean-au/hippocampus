@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"os"
+	"io"
 	"slices"
 	"testing"
 
@@ -36,7 +36,7 @@ func setupFlags(t *testing.T, args []string) {
 func resetCommandLine() {
 	viper.Reset()
 	pflag.CommandLine = pflag.NewFlagSet("bluesky", pflag.ContinueOnError)
-	pflag.CommandLine.SetOutput(os.NewFile(0, os.DevNull))
+	pflag.CommandLine.SetOutput(io.Discard)
 }
 
 // cancelledCtx returns an already-cancelled context so the bridge's reconnect loop returns before it
@@ -50,7 +50,7 @@ func cancelledCtx() context.Context {
 
 func TestRegisterFlags_ParseError(t *testing.T) {
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	fs.SetOutput(os.NewFile(0, os.DevNull))
+	fs.SetOutput(io.Discard)
 
 	if err := registerFlags(fs, []string{"--not-a-flag"}); err == nil {
 		t.Errorf("registerFlags should error on an unknown flag")

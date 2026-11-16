@@ -91,8 +91,10 @@ fi
 echo "pre-commit: go test (coverage)"
 go test -coverprofile=coverage.out ./...
 # The reported profile excludes the generated protobuf/gateway code (contract/hippocampus*.pb*.go
-# and *_grpc.pb.go) to mirror the Coveralls report in CI - coverage of generated getters is noise.
-grep -vE '/contract/hippocampus[^/]*\.go:' coverage.out > coverage.filtered.out
+# and *_grpc.pb.go) to mirror the Coveralls report in CI - coverage of generated getters is noise -
+# and the three packages that only ever run inside other packages' tests or as an example, so always
+# read as 0% to a profile that credits the package under test. Keep the pattern the same as CI's.
+grep -vE '/contract/hippocampus[^/]*\.go:|/db/dbtest/|/internal/flagdocs/|/examples/go/quickstart/' coverage.out > coverage.filtered.out
 go tool cover -html=coverage.filtered.out -o coverage.html
 
 echo "pre-commit: all checks passed"

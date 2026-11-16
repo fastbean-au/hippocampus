@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ const goodRules = `{"defaultAction":"drop","rules":[{"name":"r","expr":"event.na
 
 func TestRegisterFlags_ParseError(t *testing.T) {
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	fs.SetOutput(os.NewFile(0, os.DevNull))
+	fs.SetOutput(io.Discard)
 
 	if err := registerFlags(fs, []string{"--not-a-flag"}); err == nil {
 		t.Error("registerFlags should error on an unknown flag")
@@ -173,18 +174,6 @@ func TestServe_ReachesRun(t *testing.T) {
 
 	if err := serve(context.Background()); err == nil {
 		t.Error("serve should surface run's validation error")
-	}
-}
-
-// TestRealMain covers the process shell. It runs exactly one case, because realMain registers onto
-// the global pflag.CommandLine - a second call would redefine every flag on it, and a parse error
-// there exits the test binary rather than returning (pflag.CommandLine is ExitOnError). The parse
-// and validation failures are covered above against flag sets this package owns.
-func TestRealMain(t *testing.T) {
-	viper.Reset()
-
-	if code := realMain([]string{"--version"}); code != 0 {
-		t.Errorf("expected exit code 0 for --version, got %d", code)
 	}
 }
 

@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"os"
+	"io"
 	"strings"
 	"testing"
 
@@ -26,7 +26,7 @@ func setupFlags(t *testing.T, args []string) {
 
 func TestRegisterFlagsRefusesAnUnknownFlag(t *testing.T) {
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	fs.SetOutput(os.NewFile(0, os.DevNull))
+	fs.SetOutput(io.Discard)
 
 	if err := registerFlags(fs, []string{"--not-a-flag"}); err == nil {
 		t.Error("expected an unknown flag to be refused")
