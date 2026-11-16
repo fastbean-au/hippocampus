@@ -95,7 +95,7 @@ startup so a second consolidating instance against the same database fails fast;
 estimates live rows (payload `octet_length` + `evictionRowOverheadBytes` per row — deliberately
 NOT a file-size measure, which never shrinks after deletes on Postgres and would make eviction
 chase a figure that cannot drop; keep it the exact complement of `EvictMemories`' freed-bytes
-estimate); `walTriggerBytes` stays rejected in main.go (no client-visible WAL file) and
+estimate); `walTriggerBytes` stays rejected in `initStore` (no client-visible WAL file) and
 `Preserve` is a no-op (autovacuum). MySQL (`go-sql-driver/mysql`, `mysql.go`, requires MySQL
 8.0.20+): same shape as Postgres — the instance lock is a schema-scoped `GET_LOCK` on a pinned
 connection, `UsedBytes` shares the live-row estimate (`usedBytesLiveRows`), `Preserve` is a

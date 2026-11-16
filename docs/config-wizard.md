@@ -159,5 +159,5 @@ of keys; every other absent key reads as its zero value, and several of those ar
 _present_ `consolidation.method`, `aggressiveness`, or `unitsOfAgeInDays` of 0 still refuses to
 start, which is why the minimal form omits them only when they match the service's own default
 rather than writing a zero. A test in `cmd/config-wizard` keeps the wizard's list
-of service defaults in step with `viper.SetDefault` in `cmd/hippocampus/main.go`, so the two cannot
+of service defaults in step with the `viper.SetDefault` calls in `cmd/hippocampus`, so the two cannot
 drift into producing a config that looks right and will not start.

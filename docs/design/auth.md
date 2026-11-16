@@ -27,7 +27,7 @@ keyed secret. `revocation.go` adds `RevocationList` (a JSON file of revoked `jti
 file's mtime every `auth.revocationRefreshSeconds`, failing startup on a bad initial load but
 keeping the last good set on a bad reload) and `NewRevokingVerifier`, a decorator that checks
 the list after any inner `Verifier` succeeds, so revocation composes with `idp` as well as
-`hmac`. All viper reads stay in main.go: `hmacConfigFromViper`/`resolveMintKey` there build the
+`hmac`. All viper reads stay in `cmd/hippocampus`: `hmacConfigFromViper`/`resolveMintKey` there build the
 `HMACConfig` and pick the minting key.
 `UnaryServerInterceptor` and `HTTPMiddleware` are the two enforcement adapters — both are
 needed because the HTTP gateway calls `hipo` directly and never passes through the gRPC
@@ -49,7 +49,7 @@ pre-handler) are the two enforcement adapters; both resolve the highest tier the
 `Claims.Roles` grant (default-closed: a token resolving to no known tier is denied every RPC) and
 stash it via `ContextWithTier`/`TierFromContext`. Roles come from the `roles` claim (or
 `auth.roleClaim` for an IdP that names it differently), mapped to tiers by `auth.roleMapping`;
-`--mint-token --role` stamps them. The authorizer is built (in main.go) only when auth is enabled.
+`--mint-token --role` stamps them. The authoriser is built (in `initAuth`) only when auth is enabled.
 The stashed tier drives two things: `hippocampus.Server.mayReinforce` (the reader-recall gate —
 `auth.readerRecallReinforces` decides whether a reader's `RecallMemories`/reinforcing
 `SearchMemories` actually reinforces or is downgraded to a plain read) and the `WhoAmI` RPC, which

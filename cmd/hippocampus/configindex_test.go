@@ -299,14 +299,9 @@ func wizardIndexFacts(t *testing.T) (map[string]string, map[string]string) {
 func setDefaultLiterals(t *testing.T) map[string]string {
 	t.Helper()
 
-	source, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatalf("reading main.go: %s", err)
-	}
-
 	literals := map[string]string{}
 
-	for _, match := range setDefaultLiteral.FindAllStringSubmatch(string(source), -1) {
+	for _, match := range setDefaultLiteral.FindAllStringSubmatch(serviceSource(t, "."), -1) {
 		literals[match[1]] = match[2]
 	}
 
@@ -472,4 +467,34 @@ func headingSlug(heading string) string {
 	slug = slugDropCharacters.ReplaceAllString(slug, "")
 
 	return strings.ReplaceAll(slug, " ", "-")
+}
+
+// serviceSource is the service's own source in dir, every non-test file concatenated. The defaults,
+// validation and wiring are split by subsystem across the package (TODO-3 item 199), so a guard
+// that reads main.go alone would quietly check less each time a subsystem moved out of it.
+func serviceSource(t *testing.T, dir string) string {
+	t.Helper()
+
+	paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatalf("listing the service's source: %s", err)
+	}
+
+	var source strings.Builder
+
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %s", path, err)
+		}
+
+		source.Write(content)
+		source.WriteString("\n")
+	}
+
+	return source.String()
 }

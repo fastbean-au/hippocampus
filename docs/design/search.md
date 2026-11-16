@@ -7,7 +7,7 @@ version and links here.
 ## `search/`
 
 `search/` — the secondary content-search index (`search.Index` interface with three
-implementations: no-op, `SQL`, and `opensearch-go/v4`). **Two backends, selected in main.go:**
+implementations: no-op, `SQL`, and `opensearch-go/v4`). **Two backends, selected in `initSearchIndex`:**
 OpenSearch when `opensearch.enabled`, otherwise `search.NewSQL` over the primary store — so
 `SearchMemories` works out of the box on **every** driver instead of failing closed, which is what
 it did while OpenSearch was the only backend and, until item 96, what it still did on
@@ -122,7 +122,7 @@ no-op in place, logged at startup and surfaced as `FailedPrecondition`.
   and does real ANN, but the vectors would have to live in the primary store, which reverses item
   56's capacity decision — a separate argument, not part of the keyword work. The two halves are independent and
   neither implies the other: the `embed` package produces vectors, OpenSearch's k-NN index stores
-  and searches them; `main.go` **fails startup** if `llm.embedding.enabled` is set without
+  and searches them; `initEmbedder` **fails startup** if `llm.embedding.enabled` is set without
   `opensearch.enabled`. `search.Query` carries either `Text` or `Vector` (the RPC layer embeds the
   query and passes it down, so `search/` never learns about an embedder), and `search.Doc` carries
   the vector. Vectors live **only in the index, never the primary store** — ~3 KiB per memory

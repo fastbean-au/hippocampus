@@ -96,9 +96,9 @@ always the fix. Loosening the check is almost never the fix.
 1. Read it with viper in `cmd/hippocampus`. A key the service package acts on gets a field in
    `hippocampus.Config` and is read in `serverconfig.go` (`TestServerConfigFillsEveryField` fails if
    the field is never assigned); the `hippocampus` package itself never reads configuration. Give
-   the key a default in `setStartupDefaults` or with `viper.SetDefault`. Do not use a constant for a
-   default.
-2. If some values must stop the service starting, refuse them in `configProblems`, which also backs
+   the key a default with `viper.SetDefault` in its subsystem's `set…Defaults` (which
+   `setStartupDefaults` calls). Do not use a constant for a default.
+2. If some values must stop the service starting, refuse them in the subsystem's `…Problems` (which `configProblems` gathers), which also backs
    `--check-config`.
 3. Offer it in the configuration wizard (`cmd/config-wizard/wizard/app.js`). Record its service
    default as `svc`. If the wizard deliberately leaves it out, add it to `unmanagedConfigKeys` with

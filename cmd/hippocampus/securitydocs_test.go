@@ -33,10 +33,7 @@ var whitespace = regexp.MustCompile(`\s+`)
 func TestSecurityDocsDoNotDenyShippedFeatures(t *testing.T) {
 	root := filepath.Join("..", "..")
 
-	source, err := os.ReadFile(filepath.Join(root, "cmd", "hippocampus", "main.go"))
-	if err != nil {
-		t.Fatalf("reading main.go: %s", err)
-	}
+	source := serviceSource(t, filepath.Join(root, "cmd", "hippocampus"))
 
 	for _, v := range deniedFeatures {
 		page, err := os.ReadFile(filepath.Join(root, v.file))
@@ -51,7 +48,7 @@ func TestSecurityDocsDoNotDenyShippedFeatures(t *testing.T) {
 			continue
 		}
 
-		if strings.Contains(string(source), `"`+v.key+`"`) {
+		if strings.Contains(source, `"`+v.key+`"`) {
 			t.Errorf("%s says %q, but the service reads %s - the feature exists", v.file, v.phrase, v.key)
 		}
 	}

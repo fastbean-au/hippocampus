@@ -20,7 +20,7 @@ import (
 )
 
 // newGRPCTestServer starts a real gRPC server - a real TCP listener plus grpc.NewServer and
-// contract.RegisterHippocampusServer, exactly the shape cmd/hippocampus/main.go wires up for the
+// contract.RegisterHippocampusServer, exactly the shape cmd/hippocampus's newGRPCServer wires up for the
 // native gRPC listener - hosting a real *hippocampus.Server over an in-memory SQLite db.DB. It
 // returns a connected contract.HippocampusClient (dialed with insecure transport credentials, as
 // there is no TLS in this test) plus the listen address, which

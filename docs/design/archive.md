@@ -8,7 +8,7 @@ version and links here.
 
 `archive/` — the export/import wire format and object storage:
 protodelim+gzip codec over `ArchiveRecord` protos (versioned header first) and the
-`ObjectStore` interface (Put/Get) with **two** implementations, selected in `main.go` and
+`ObjectStore` interface (Put/Get) with **two** implementations, selected in `initObjectStore` and
 mutually exclusive (`configProblems` refuses both being set): an aws-sdk-go-v2 S3 one
 (`s3.bucket`; `s3.endpoint`/`s3.usePathStyle` for MinIO; credentials from the standard AWS chain)
 and a filesystem one (`archive.directory`, `archive/file.go`). The filesystem backend exists

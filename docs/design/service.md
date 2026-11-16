@@ -59,7 +59,13 @@ toggles JSON-vs-text output to stdout) and observability (the shared `observabil
 `cmd/hippocampus/observability.go` was promoted into: optional OTEL tracing/metrics over
 OTLP/gRPC, no-op when disabled), opens the DB, wires the gRPC server with interceptors (plus the
 `otelgrpc` stats handler when observability is enabled), starts stats, and on SIGINT/SIGTERM
-flushes observability then closes the DB. The build version (`version.go`,
+flushes observability then closes the DB. `run()` is only that ordering and the teardown (TODO-3
+item 199): each subsystem has a file of its own - `store.go`, `searchindex.go`, `llm.go`,
+`objectstore.go`, `callbacks.go`, `authsetup.go`, `tlsconfig.go`, `grpcserver.go`, `gateway.go`,
+`observabilityconfig.go`, `consolidationconfig.go`, `topologyconfig.go` - holding its `set…Defaults`,
+its `…Problems` (which `setStartupDefaults` and `configProblems` call in turn), a small config struct
+with the `…ConfigFromViper` that reads it, and an `init…` (or `new…`) that takes the struct and
+builds the subsystem, so each startup failure path is testable without starting the service. The build version (`version.go`,
 `runtime/debug.ReadBuildInfo`) is logged in the startup lines, returned in the `/healthz` body,
 and set as the OTEL `service.version` resource attribute; `--version` prints it and exits before
 the config file is read. `--mint-token` (with `--client-id`, `--ttl`,

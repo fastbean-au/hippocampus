@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/viper"
-
 	log "github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
 )
@@ -50,18 +48,12 @@ func TestWarnOnUnconstrainedIdP(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			viper.Reset()
-			t.Cleanup(viper.Reset)
-
-			viper.Set("auth.audience", c.audience)
-			viper.Set("auth.issuer", c.issuer)
-
 			hook := logtest.NewGlobal()
 			t.Cleanup(hook.Reset)
 
 			log.SetLevel(log.WarnLevel)
 
-			warnOnUnconstrainedIdP()
+			warnOnUnconstrainedIdP(c.audience, c.issuer)
 
 			var gotAud, gotIss bool
 

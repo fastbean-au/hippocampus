@@ -3,48 +3,25 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"math"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/health"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/keepalive"
-	"google.golang.org/grpc/reflection"
 
-	"github.com/fastbean-au/hippocampus/archive"
 	"github.com/fastbean-au/hippocampus/auth"
-	"github.com/fastbean-au/hippocampus/contract"
-	"github.com/fastbean-au/hippocampus/db"
-	"github.com/fastbean-au/hippocampus/embed"
 	"github.com/fastbean-au/hippocampus/hippocampus"
-	"github.com/fastbean-au/hippocampus/notify"
-	"github.com/fastbean-au/hippocampus/observability"
-	"github.com/fastbean-au/hippocampus/ratelimit"
-	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/stats"
-	"github.com/fastbean-au/hippocampus/summarise"
 )
 
 func main() {
@@ -364,318 +341,23 @@ func execute(args []string) {
 	}
 }
 
-// Model providers. llm.provider / llm.embedding.provider select which client is built; the values
-// are part of the configuration's contract, so they are a small closed set spelled once here and
-// checked by configProblems rather than by whichever switch happens to read them.
-const (
-	providerOllama = "ollama"
-	providerOpenAI = "openai"
-)
-
-// defaultOllamaAddress is the address both halves default to, and is also what configProblems
-// compares against to catch the one configuration that is wrong in a way nothing else would notice:
-// an openai provider left pointing at the Ollama default, which answers 404 to every call.
-const defaultOllamaAddress = "http://localhost:11434"
-
-// llmAliases maps each llm.* key to the ollama.* key it replaced in v0.42.0. The block was renamed
-// because it stopped being about Ollama: "ollama.address" naming an Azure endpoint is a setting that
-// reads as a mistake, and an operator looking for how to point the service at their own gateway
-// would not think to look under it.
-//
-// llm.provider, llm.apiKey and their embedding counterparts have no entry here because they are new;
-// there is nothing for them to be aliased from.
-var llmAliases = []struct {
-	key    string
-	legacy string
-}{
-	{key: "llm.enabled", legacy: "ollama.enabled"},
-	{key: "llm.address", legacy: "ollama.address"},
-	{key: "llm.model", legacy: "ollama.model"},
-	{key: "llm.timeoutSeconds", legacy: "ollama.timeoutSeconds"},
-	{key: "llm.maxMemories", legacy: "ollama.maxMemories"},
-	{key: "llm.promptCharLimit", legacy: "ollama.promptCharLimit"},
-	{key: "llm.systemPrompt", legacy: "ollama.systemPrompt"},
-	{key: "llm.temperature", legacy: "ollama.temperature"},
-	{key: "llm.autoSummarise", legacy: "ollama.autoSummarise"},
-	{key: "llm.embedding.enabled", legacy: "ollama.embedding.enabled"},
-	{key: "llm.embedding.address", legacy: "ollama.embedding.address"},
-	{key: "llm.embedding.model", legacy: "ollama.embedding.model"},
-	{key: "llm.embedding.timeoutSeconds", legacy: "ollama.embedding.timeoutSeconds"},
-	{key: "llm.embedding.batchSize", legacy: "ollama.embedding.batchSize"},
-	{key: "llm.embedding.maxTextBytes", legacy: "ollama.embedding.maxTextBytes"},
-	{key: "llm.embedding.dimensions", legacy: "ollama.embedding.dimensions"},
-}
-
-// llmProvider reads a provider key, treating an unset or blank value as the default provider rather
-// than as a distinct third state. setStartupDefaults fills both provider keys, so a blank one only
-// arises where the defaults did not run - a test driving run() directly, or a config that sets the
-// key to an empty string - and in both cases the honest reading is "the operator did not choose",
-// which is what the default means.
-func llmProvider(key string) string {
-	provider := strings.TrimSpace(viper.GetString(key))
-
-	if provider == "" {
-		return providerOllama
-	}
-
-	return provider
-}
-
-// resolveLLMAliases copies any ollama.* key an operator still sets onto its llm.* replacement, and
-// returns the legacy keys it honoured so the caller can say so once. Nothing downstream reads an
-// ollama.* key: every consumer - here, hippocampus/server.go and hippocampus/topology.go - reads the
-// new name, and this is the single point that makes the old one mean it.
-//
-// It MUST run before setStartupDefaults. viper.IsSet answers true for a key carrying only a default,
-// so once the llm.* defaults are in place there is no way left to ask whether an operator set one -
-// and the alias would then never win, silently, against the very keys it exists to keep working.
-//
-// The new key is written with viper.Set (the highest precedence) rather than SetDefault, which is
-// safe precisely because the copy only happens when the new key is unset: an explicit llm.* value
-// always beats a legacy one, and the two being set together is the operator mid-migration.
-func resolveLLMAliases() []string {
-	var honoured []string
-
-	for _, alias := range llmAliases {
-		if viper.IsSet(alias.key) || !viper.IsSet(alias.legacy) {
-			continue
-		}
-
-		viper.Set(alias.key, viper.Get(alias.legacy))
-
-		honoured = append(honoured, alias.legacy)
-	}
-
-	return honoured
-}
-
-// warnIfOverCapacity reports a store that is already past its byte capacity target as the service
-// starts, naming both figures.
-//
-// It exists for one upgrade in particular. Until 0.45.0 the per-row allowance behind UsedBytes was a
-// single 256-byte constant on all three drivers, and on the server drivers it under-counted real
-// disk by three to five times; the allowances are now measured per dialect, so the same store
-// against the same consolidation.capacityBytes reports a much larger figure than it did yesterday
-// and the first cycle after the upgrade is the one that evicts hard. A deployment that has re-derived
-// its capacity target from real disk sees nothing; one that has not is told before the cycle runs
-// rather than after.
-//
-// Only when a byte target is configured, since UsedBytes is a scan of the two tables on the server
-// drivers and is otherwise never consulted.
-func warnIfOverCapacity(database db.Store, capacityBytes int64) {
-	log.Trace("func() warnIfOverCapacity")
-
-	if capacityBytes <= 0 {
-		return
-	}
-
-	used, err := database.UsedBytes(context.Background())
-	if err != nil {
-		// Not fatal: this is advice, and the sleep cycle reads the same figure for itself.
-		log.Warnf("could not read the store's used bytes to check it against the capacity target: %s", err.Error())
-
-		return
-	}
-
-	if used <= capacityBytes {
-		return
-	}
-
-	log.Warnf(
-		"the store is already over its capacity target - used_bytes %d against consolidation.capacityBytes %d - "+
-			"so the next consolidation cycle will evict until it is back under; if this is unexpected after an "+
-			"upgrade, see the 0.45.0 release note on the per-row storage allowances",
-		used, capacityBytes,
-	)
-}
-
 // setStartupDefaults applies every built-in default shared by normal startup and the
 // --backfill-search CLI mode. It is a function rather than a run of statements inside execute so a
 // test can assert what the service does with no configuration file at all - which, since these
 // defaults are what makes that a supported way to start, is the property worth pinning.
 func setStartupDefaults() {
-	viper.SetDefault("storage.driver", "sqlite")
-	viper.SetDefault("storage.pool.maxOpenConns", 25)
-	viper.SetDefault("storage.queryTimeoutSeconds", 60)
-	viper.SetDefault("storage.compression.enabled", true)
-	viper.SetDefault("storage.compression.minBytes", 512)
-
-	// Off, because before it the service rebuilt nothing. The two bounds match
-	// HippocampusIndexBloated's, so with rebuilds on that alert fires only for an index the
-	// rebuilds are not reaching (TODO-3 item 183).
-	viper.SetDefault("storage.indexRebuild.enabled", false)
-	viper.SetDefault("storage.indexRebuild.minBytes", 16777216)
-	viper.SetDefault("storage.indexRebuild.maxBytesPerEntry", 512)
+	setStoreDefaults()
+	setConsolidationDefaults()
+	setObservabilityDefaults()
+	setGatewayDefaults()
+	setSearchDefaults()
+	setArchiveDefaults()
+	setCallbackDefaults()
+	setLLMDefaults()
+	setTopologyDefaults()
 
 	viper.SetDefault("shutdown.timeoutSeconds", 10)
 
-	// The Prometheus scrape endpoint. Off by default (a listener nobody asked for is a listener
-	// nobody firewalled), but its port and path are defaulted so that enabling it is one boolean:
-	// 9464 is the port the OpenTelemetry Prometheus exporter conventionally uses, which is what a
-	// scrape config is most likely already written against.
-	viper.SetDefault("observability.prometheus.port", 9464)
-	viper.SetDefault("observability.prometheus.path", "/metrics")
-
-	// The OpenAPI document is served by default, which is what every version before the key existed
-	// did. It is defaulted rather than left to read as a zero bool precisely because the zero value
-	// is the opposite of the existing behaviour, and an unset key must not silently remove an
-	// endpoint the documentation tells clients to generate from.
-	viper.SetDefault("gateway.openapi.enabled", true)
-
-	// The four keys validateConfig refuses at zero. They are defaulted so that a run with no
-	// configuration file at all - the first thing anyone does after cloning - starts on the same
-	// decay curve the documentation describes, rather than failing on four keys in turn. This is
-	// deliberately not a relaxation of item 19.1's guarantee: viper falls back to a default only
-	// for a key the configuration does not set, so an explicitly configured 0 still fails
-	// validation, which is the case that silently deleted everything. The values match the repo's
-	// own config.json, so reading that file changes nothing.
-	viper.SetDefault("consolidation.method", 1)
-	viper.SetDefault("consolidation.aggressiveness", 1.0)
-	viper.SetDefault("consolidation.unitsOfAgeInDays", 1.0)
-	viper.SetDefault("storage.directory", "./data")
-
-	// The three keys that made the defaults VALID but not FUNCTIONAL, which is the sharper form of
-	// the same mistake. None of them was refused at zero, so all three read as their zero value and
-	// nothing failed: a zero deletionThreshold makes shouldConsolidate's comparison `value < 0`,
-	// which no positive value satisfies, so consolidation became a total no-op; a zero
-	// sleep.periodSeconds disabled the timed cycle that would have applied it; and
-	// consolidation.enabled was defaulted in run() rather than here, so an instance built from the
-	// defaults alone rejected its own Sleep RPC. A memory service that starts, validates, serves,
-	// and forgets nothing is a worse failure than one that refuses to start, because only the
-	// second is noticed. Values match the repo's own config.json.
-	viper.SetDefault("consolidation.deletionThreshold", 10.0)
-	viper.SetDefault("sleep.periodSeconds", 3600)
-	viper.SetDefault("consolidation.enabled", true)
-
-	// Search result ranking. Both default to a mild influence rather than off: a store that knows
-	// how significant each memory is, and how often it has been recalled, should use that when
-	// deciding what to show first - text relevance alone is what a search engine without those
-	// signals would do. Mild, because relevance still has to lead: at these weights significance
-	// and recall reorder near-equal matches rather than override a clearly better one. Set both to
-	// 0 for pure relevance order.
-	viper.SetDefault("search.significanceWeight", 0.3)
-	viper.SetDefault("search.recallWeight", 0.2)
-
-	// How long a significance registry level survives having nothing left that carries it, before
-	// the sleep cycle reaps it. The registry is the one table that otherwise grows with the store's
-	// HISTORY rather than its contents - a row per distinct significance value ever written, never
-	// removed - so unlike every other bound here this one defaults to being IN FORCE.
-	//
-	// A week rather than a month, which is the window the forgotten log takes, because the two are
-	// bounding different things. The log is a record and its window is how much history an operator
-	// wants to be able to read; the registry is a SCALE, and what the window protects is a client
-	// that positions against a value it is not carrying at this instant. Seven days spans the gap
-	// between any two sessions of a client that is actually using the registry that way, while a
-	// producer writing arbitrary values - the shape that grew one to 29,001 rows - never reads it at
-	// all. 0 keeps every value ever seen, which is what the service did before.
-	viper.SetDefault("consolidation.significanceLevels.unusedRetentionInDays", 7)
-
-	// The forgotten log (see docs/operations.md). Off by default - it costs a row per forgotten
-	// memory - but its bounds are defaulted anyway, so that turning it on gets a log that is
-	// already bounded rather than one that grows until somebody notices. An explicit 0 on either
-	// disables that bound.
-	viper.SetDefault("consolidation.tombstones.maxRows", 100000)
-	viper.SetDefault("consolidation.tombstones.maxAgeInDays", 30)
-
-	// Defaulted though the scheduled export is off unless intervalHours is set, as the tombstone caps
-	// above are: a bound that matters once the feature is on should not depend on the operator
-	// remembering it. A week of daily archives.
-	viper.SetDefault("archive.scheduledExport.keep", 7)
-
-	// consolidation.tombstones.maxBytes has deliberately NO default, and neither do the byte caps
-	// on the two queues below. A tombstone is a fixed-width row, so the row cap above already IS a
-	// byte cap - roughly 19 MB at the default - and a second defaulted number would be the same
-	// bound said twice, in a unit that would then disagree with it the day the per-row allowance
-	// moved. What the key buys is being able to state the bound in the unit a disk is sized in.
-	// Zero means unbounded on all three; see docs/operations.md on sizing.
-
-	// Outbound callbacks (see docs/operations.md). Off by default - a deployment with no receiver
-	// should queue nothing at all - but every bound is defaulted anyway, on the same reasoning as
-	// the forgotten log above: turning it on gets a queue that is already bounded rather than one
-	// that grows until a receiver's outage fills the disk. An explicit 0 on either cap disables it.
-	//
-	// The three deletion toggles default ON because the feature as a whole is off: an operator who
-	// has configured a URL wants the callbacks, and having to then enable them individually would be
-	// a second switch for the same decision. The fourth - memoriesAtRisk - defaults OFF against that
-	// grain, because it is the only kind that costs a scan rather than riding on work already being
-	// done: raising it runs a preview at the top of every cycle.
-	viper.SetDefault("callbacks.timeoutSeconds", 10)
-	viper.SetDefault("callbacks.maxBodyBytes", 65536)
-	viper.SetDefault("callbacks.maxIdsPerDelivery", 500)
-	viper.SetDefault("callbacks.maxRows", 1000000)
-	viper.SetDefault("callbacks.maxAgeHours", 24)
-	viper.SetDefault("callbacks.batchSize", 100)
-	viper.SetDefault("callbacks.retryBaseBackoffSeconds", 1)
-	viper.SetDefault("callbacks.retryMaxBackoffSeconds", 300)
-	viper.SetDefault("callbacks.events.memoryForgotten", true)
-	viper.SetDefault("callbacks.events.eventForgotten", true)
-	viper.SetDefault("callbacks.events.sleepCompleted", true)
-	viper.SetDefault("callbacks.events.memoriesAtRisk", false)
-	viper.SetDefault("callbacks.events.memoryWrites", false)
-	viper.SetDefault("callbacks.atRiskLimit", 1000)
-	viper.SetDefault("callbacks.atRiskMargin", 0)
-
-	// "abandon" is what every deployment had before the key existed, so the default changes nothing.
-	// It is not the right answer for a store pointing at payloads it does not hold - see
-	// validateBacklogPolicy, which says so at startup rather than choosing for the operator, because
-	// the alternatives cost either this disk or the store's willingness to forget at all.
-	viper.SetDefault("callbacks.backlogPolicy", "abandon")
-
-	// callbacks.maxBytes is the one byte cap that bounds something a row cap cannot, and it is
-	// still not defaulted. A delivery carries up to maxIdsPerDelivery items and, under
-	// includeBodies, a body each, so maxRows bounds this queue between a few hundred megabytes of
-	// bare ids and a figure with no ceiling - but how much of that a deployment can afford is a
-	// property of its disk, and there is no number that is right for both a laptop store and a
-	// server. Reaching this cap discards notifications nobody will ever receive, which is a policy
-	// an operator should choose rather than inherit. What stands in for a default is the startup
-	// warning in validateCallbackConfig, where the shape is dangerous.
-
-	viper.SetDefault("opensearch.index", "hippocampus-memories")
-	viper.SetDefault("opensearch.queueSize", 1024)
-	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)
-	viper.SetDefault("opensearch.reconcileBatchSize", 500)
-
-	// The reverse half of that sweep - removing index documents whose memory the store no longer
-	// holds - defaults ON. It is the backstop for every way a delete can fail to reach the index,
-	// and without it the divergence only ever grows: a live deployment was measured holding
-	// twenty-one documents per row the store actually had. The outbox caps below bound the queue
-	// when the index cannot keep up; reaching them is what hands work to this sweep.
-	viper.SetDefault("opensearch.staleSweep", true)
-	viper.SetDefault("opensearch.outbox.maxRows", 1000000)
-	viper.SetDefault("opensearch.outbox.maxAgeHours", 24)
-	// Generation. llm.provider selects the client: "ollama" (the default, and the native
-	// /api/generate API) or "openai" (any endpoint speaking the OpenAI chat-completions API -
-	// OpenAI, Azure, vLLM, LiteLLM, OpenRouter, a corporate gateway, and Ollama's own /v1). The
-	// defaults below describe the default provider, which is why the address is Ollama's; an
-	// openai-provider deployment must name its own base URL, and configProblems refuses one that
-	// has not.
-	viper.SetDefault("llm.provider", providerOllama)
-	viper.SetDefault("llm.address", defaultOllamaAddress)
-	viper.SetDefault("llm.model", "llama3.2")
-	viper.SetDefault("llm.timeoutSeconds", 120)
-
-	// Semantic-search embedding. Off by default and, unlike the summariser, gated on OpenSearch:
-	// the k-NN index is the only vector store this service has. It carries its own provider,
-	// address, key and model because nothing requires the two halves to share an endpoint - and
-	// generating against a hosted model while embedding against a local Ollama is both reasonable
-	// and much cheaper.
-	viper.SetDefault("llm.embedding.provider", providerOllama)
-	viper.SetDefault("llm.embedding.address", defaultOllamaAddress)
-	viper.SetDefault("llm.embedding.model", "nomic-embed-text")
-	viper.SetDefault("llm.embedding.timeoutSeconds", 30)
-	viper.SetDefault("llm.embedding.batchSize", 32)
-	viper.SetDefault("llm.embedding.dimensions", 768)
-
-	// The deployment topology view. On by default, unlike every other optional feature here,
-	// because it neither stores anything nor reaches anything a running instance is not already
-	// attached to - and because the failure it exists to make visible (a dependency that is quietly
-	// unreachable) is one nobody thinks to switch a diagnostic on for beforehand.
-	//
-	// The tier defaults to reader rather than admin. That is safe only because no address in the
-	// response is unredacted (see hippocampus/topology_probe.go's redactEndpoint), and it is
-	// deliberate: what the view exposes is the deployment's shape rather than its contents, and the
-	// people who need it most are rarely the ones holding an admin token. Deployments where the
-	// shape is itself sensitive raise it here.
 	// A listing's TotalCount is a second unbounded pass over the same predicate as its page, and
 	// since the listing index made the page a walk of `limit` rows it is the larger half of a list
 	// request by an order of magnitude. It cannot be answered with an index (one that speeds the
@@ -683,18 +365,6 @@ func setStartupDefaults() {
 	// consequence is a total that can lag the page beside it, which is the same eventual consistency
 	// the content-search index already has; 0 disables the cache and counts every time.
 	viper.SetDefault("listing.countCacheSeconds", 5)
-
-	viper.SetDefault("topology.enabled", true)
-	viper.SetDefault("topology.minimumTier", "reader")
-	viper.SetDefault("topology.probeIntervalSeconds", 30)
-	viper.SetDefault("topology.probeTimeoutSeconds", 2)
-
-	// The instance registry (see hippocampus/peers.go). On by default on the server drivers, where
-	// it is the only way an instance can name its peers - and the only way "every instance came up
-	// as a replica, so nothing is forgetting" is reported at all, that being a fault with no
-	// component to attach itself to. Ignored on SQLite, which is single-instance by construction.
-	// One small upsert and one indexed delete per instance per interval.
-	viper.SetDefault("topology.heartbeatSeconds", 30)
 }
 
 // run builds the server (observability, database, the optional search/S3/auth/TLS surface, the gRPC
@@ -702,573 +372,81 @@ func setStartupDefaults() {
 // or an explicit cancel in a test - or a listener fails, then shuts every component down in order.
 // It returns an error for a bootstrap failure or a fatal serve error; a clean shutdown returns nil.
 // Split out of main so the whole serve/shutdown lifecycle can be exercised in-process by a test,
-// observabilityConfigFromViper builds the observability configuration from the config file, in the
-// same mould as hmacConfigFromViper: the viper reads stay in main.go, and what they produce is a
-// plain struct a test can assert on without starting a service.
-//
-// observability.serviceName is the one key here that a single-instance deployment never needs and a
-// horizontally-scaled one cannot do without. The OTLP-to-Prometheus translation promotes only
-// service.name/service.version/job/instance onto each series, so every instance sharing this name
-// publishes one series per instrument between them, and the value a dashboard reads is whichever
-// instance exported last. Empty is left empty rather than defaulted here, so the fallback to
-// "hippocampus" stays in observability.Config.serviceName and an existing config file keeps the
-// resource attributes it has always had.
-func observabilityConfigFromViper(version versionInfo) observability.Config {
-	log.Trace("func() observabilityConfigFromViper")
-
-	return observability.Config{
-		TracingEnabled:         viper.GetBool("observability.tracing.enabled"),
-		TracingSamplingRatio:   viper.GetFloat64("observability.tracing.samplingRatio"),
-		MetricsEnabled:         viper.GetBool("observability.metrics.enabled"),
-		MetricsIntervalSeconds: viper.GetInt("observability.metrics.exportIntervalSeconds"),
-		OTLPEndpoint:           viper.GetString("observability.otlp.endpoint"),
-		OTLPInsecure:           viper.GetBool("observability.otlp.insecure"),
-		PrometheusEnabled:      viper.GetBool("observability.prometheus.enabled"),
-		ServiceName:            viper.GetString("observability.serviceName"),
-		ServiceVersion:         version.Version,
-	}
-}
-
 // which main() (blocking on real signals) cannot be.
 func run(ctx context.Context, version versionInfo) error {
 	log.Info("initialising hippocampus")
 	log.Infof("version: %s", version.String())
 	log.Infof("logging level: %s", log.GetLevel())
 
-	// initialise observability
 	log.Debug("initialising observability")
+
 	obsCfg := observabilityConfigFromViper(version)
 
-	shutdownObservability, err := observability.Init(context.Background(), obsCfg)
+	metricsServer, shutdownObservability, err := initObservability(obsCfg, metricsServerConfigFromViper())
 	if err != nil {
-		return fmt.Errorf("failed to initialise observability: %w", err)
+		return err
 	}
+
 	log.Debug("observability initialised")
 
-	// The scrape endpoint, on a listener of its own rather than the gateway - see
-	// observability.MetricsServer for why that separation is the point rather than an
-	// implementation detail. Started here, immediately after Init, so a port clash fails startup
-	// before the database is opened; a no-op when the scrape reader was not installed.
-	metricsServer := observability.NewMetricsServer(observability.MetricsConfig{
-		Port:        viper.GetInt("observability.prometheus.port"),
-		BindAddress: viper.GetString("observability.prometheus.bindAddress"),
-		Path:        viper.GetString("observability.prometheus.path"),
-		Component:   "hippocampus",
-	})
-
-	if err := metricsServer.Start(); err != nil {
-		// Observability is already installed, so unwind it before returning - otherwise a bad
-		// metrics port leaves exporter goroutines behind in a process reporting a startup failure.
-		flushObservability(shutdownObservability)
-
-		return fmt.Errorf("failed to start the metrics endpoint: %w", err)
-	}
-
-	// initialise DB. storage.driver selects the backend; sqlite (the default) preserves the
-	// embedded, zero-dependency behaviour of every prior release.
+	// storage.driver selects the backend; sqlite (the default) preserves the embedded,
+	// zero-dependency behaviour of every prior release.
 	log.Debug("initialising database")
 
-	// consolidation.enabled (defaulted true in setStartupDefaults) selects whether this instance
-	// runs the sleep cycle. In a horizontally scaled deployment against a shared postgres/mysql
-	// database, exactly one instance runs with it true - it takes the single-consolidator instance
-	// lock and runs consolidation - while the rest run it false as read/write replicas that skip
-	// the lock and never sleep. Passed to the server driver so a replica does not contend for the
-	// lock, and to the gRPC server so it neither starts the sleep loop nor accepts the manual
-	// Sleep RPC.
-	consolidate := viper.GetBool("consolidation.enabled")
+	storeCfg := storeConfigFromViper()
 
-	if !consolidate && viper.GetString("storage.driver") == "sqlite" {
-		// SQLite is a single embedded file that cannot be shared between processes, so a
-		// non-consolidating SQLite instance is not a horizontal-scaling replica - it is just an
-		// instance that never forgets on its own. Warn so a misconfiguration expecting shared-store
-		// scaling is visible; horizontal scaling requires the postgres or mysql driver.
-		log.Warn("consolidation.enabled is false with storage.driver 'sqlite': SQLite cannot be shared between instances, so this instance simply never runs consolidation; horizontal scaling requires the postgres or mysql driver")
-	}
-
-	// Resolved before the store is opened rather than beside the search backend below, because it
-	// governs schema: initContentSearch runs inside the constructor, and creates or drops the index
-	// according to it.
-	contentIndex, contentIndexReason := contentIndexSetting()
-	contentIndexOpts := contentIndexOptions(contentIndex)
-
-	if contentIndex {
-		log.Infof("the store keeps its own content-search index (%s)", contentIndexReason)
-	} else {
-		log.Infof("the store keeps no content-search index of its own (%s)", contentIndexReason)
-	}
-
-	var database *db.DB
-
-	switch storageDriver := viper.GetString("storage.driver"); storageDriver {
-
-	case "sqlite":
-		database, err = db.New(viper.GetString("storage.directory"), contentIndexOpts...)
-
-	case "postgres":
-		// WAL-triggered sleep is SQLite-specific (it exists to force a checkpoint when the
-		// on-disk WAL file outgrows its trigger); neither server driver has a client-visible WAL
-		// file to measure. Failing fast beats accepting the config and silently never triggering.
-		// consolidation.capacityBytes works with every driver.
-		if viper.GetInt64("consolidation.walTriggerBytes") > 0 {
-			return fmt.Errorf("consolidation.walTriggerBytes is not supported with storage.driver 'postgres'")
-		}
-
-		database, err = db.NewPostgres(viper.GetString("storage.postgres.dsn"), consolidate, contentIndexOpts...)
-
-	case "mysql":
-		if viper.GetInt64("consolidation.walTriggerBytes") > 0 {
-			return fmt.Errorf("consolidation.walTriggerBytes is not supported with storage.driver 'mysql'")
-		}
-
-		database, err = db.NewMySQL(viper.GetString("storage.mysql.dsn"), consolidate, contentIndexOpts...)
-
-	default:
-		return fmt.Errorf("unknown storage.driver '%s' (expected 'sqlite', 'postgres', or 'mysql')", storageDriver)
-	}
-
+	database, err := initStore(storeCfg)
 	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
+		return err
 	}
-
-	// Cap the connection pool on the server drivers so a burst of concurrent RPCs cannot exhaust the
-	// shared database's connection slots (database/sql defaults to unlimited open connections).
-	// SQLite caps itself at one connection, so this is skipped there. Sum maxOpenConns across every
-	// instance in a replicated deployment must stay under the server's max_connections.
-	if driver := viper.GetString("storage.driver"); driver == "postgres" || driver == "mysql" {
-		database.SetPoolLimits(
-			viper.GetInt("storage.pool.maxOpenConns"),
-			viper.GetInt("storage.pool.maxIdleConns"),
-		)
-	}
-
-	// Bound how long any single statement or transaction may run, so a hung or unreachable database
-	// fails an operation after a bounded time rather than blocking the RPC goroutine and its pooled
-	// connection indefinitely. Defaults to 60s (comfortably above a full consolidation scan at the
-	// benchmarked sizes); 0 disables it. When set it must exceed the longest legitimate operation
-	// (notably a full consolidation scan), or a cycle could be aborted mid-scan.
-	database.SetQueryTimeout(time.Duration(viper.GetInt("storage.queryTimeoutSeconds")) * time.Second)
-
-	// Store memory bodies compressed, trading CPU on the read/write paths for storage - which is the
-	// resource the whole service manages to, so it buys retention. On by default: measured against
-	// the surrounding database work it costs a few percent, well under what it saves. It governs
-	// writes only: each row records whether it was compressed, so enabling or disabling it on an
-	// existing store leaves every row already written perfectly readable.
-	database.SetCompression(
-		viper.GetBool("storage.compression.enabled"),
-		viper.GetInt("storage.compression.minBytes"),
-	)
-
-	// The forgotten log: a record of what the sleep cycle deleted, and why. Off by default, and
-	// bounded when on - an unbounded log inside the store it describes would consume the headroom
-	// that drives forgetting.
-	tombstones := db.TombstonePolicy{
-		Enabled:      viper.GetBool("consolidation.tombstones.enabled"),
-		MaxRows:      viper.GetInt("consolidation.tombstones.maxRows"),
-		MaxBytes:     viper.GetInt64("consolidation.tombstones.maxBytes"),
-		MaxAgeInDays: viper.GetInt("consolidation.tombstones.maxAgeInDays"),
-	}
-
-	if tombstones.Enabled && tombstones.MaxRows <= 0 && tombstones.MaxBytes <= 0 && tombstones.MaxAgeInDays <= 0 {
-		log.Warn(
-			"the forgotten log is enabled with none of consolidation.tombstones.maxRows, maxBytes " +
-				"or maxAgeInDays set, so it will grow without bound; it is excluded from the " +
-				"capacity target but not from the disk",
-		)
-	}
-
-	database.SetTombstonePolicy(tombstones)
-
-	warnIfOverCapacity(database, viper.GetInt64("consolidation.capacityBytes"))
 
 	log.Debug("database initialised")
 
-	// initialise the secondary content-search index. OpenSearch when it is configured; otherwise
-	// the store's own index, which needs no configuration and no cluster, so SearchMemories works
-	// out of the box on every driver. A store that cannot carry one leaves the no-op in place, and
-	// that is logged rather than left to be discovered through an empty search result. Construction
-	// of the OpenSearch client only fails on unusable configuration (e.g. a malformed address) - an
-	// unreachable cluster must not prevent startup, since that index is best-effort by design.
-	searchIndex := search.NewNoop()
-
-	switch {
-
-	case viper.GetBool("opensearch.enabled"):
-		log.Debug("initialising opensearch")
-
-		idx, err := search.NewOpenSearch(searchConfigFromViper())
-		if err != nil {
-			return fmt.Errorf("failed to initialise opensearch: %w", err)
-		}
-
-		searchIndex = idx
-
-		log.Debug("opensearch initialised")
-
-	default:
-		idx, err := search.NewSQL(database)
-		if err != nil {
-			// Two ways to arrive here, and they want different advice. One is a store that cannot
-			// carry the index; the other is an operator who turned it off and left OpenSearch off
-			// too, which is a coherent choice - a store nobody searches by content - but leaves
-			// SearchMemories refusing, so it is named rather than reported as a fault.
-			if !contentIndex {
-				log.Warnf(
-					"content search is unavailable, so SearchMemories will be rejected: the store keeps no content-search index (%s) and opensearch.enabled is false",
-					contentIndexReason,
-				)
-
-				break
-			}
-
-			log.Warnf(
-				"content search is unavailable, so SearchMemories will be rejected: %s (enable opensearch.enabled to add it)",
-				err.Error(),
-			)
-
-			break
-		}
-
-		searchIndex = idx
-
-		log.Debug("content search initialised on the primary store")
+	searchIndex, err := initSearchIndex(searchIndexConfigFromViper(storeCfg.ContentIndex, storeCfg.ContentIndexReason), database)
+	if err != nil {
+		return err
 	}
 
-	// Consolidation and eviction delete memories inside the db layer, where the RPC-level
-	// write-through hooks never see them; the observer closes that gap.
-	database.SetMemoryDeleteObserver(searchIndex.DeleteMemories)
-
-	// initialise the optional embedded-LLM summariser (Ollama). Disabled by default: the no-op
-	// summariser makes SummariseMemories fail with FAILED_PRECONDITION and the sleep cycle's
-	// auto-summarisation a no-op, so the service behaves exactly as it did before. Construction
-	// only fails on unusable configuration (a missing address/model) - an unreachable Ollama server
-	// must not prevent startup, since summarisation is optional and best-effort.
-	summariser := summarise.NewNoop()
-
-	if viper.GetBool("llm.enabled") {
-		provider := llmProvider("llm.provider")
-
-		log.Debugf("initialising the %s summariser", provider)
-
-		cfg := summarise.Config{
-			Address:         viper.GetString("llm.address"),
-			Model:           viper.GetString("llm.model"),
-			APIKey:          viper.GetString("llm.apiKey"),
-			Timeout:         time.Duration(viper.GetInt("llm.timeoutSeconds")) * time.Second,
-			MaxBodies:       viper.GetInt("llm.maxMemories"),
-			PromptCharLimit: viper.GetInt("llm.promptCharLimit"),
-			SystemPrompt:    viper.GetString("llm.systemPrompt"),
-			Temperature:     viper.GetFloat64("llm.temperature"),
-		}
-
-		var (
-			s   summarise.Summariser
-			err error
-		)
-
-		switch provider {
-
-		case providerOpenAI:
-			s, err = summarise.NewOpenAI(cfg)
-
-		default:
-			s, err = summarise.NewOllama(cfg)
-
-		}
-
-		if err != nil {
-			return fmt.Errorf("failed to initialise the %s summariser: %w", provider, err)
-		}
-
-		summariser = s
-
-		log.Debugf("%s summariser initialised", provider)
+	summariser, err := initSummariser(summariserConfigFromViper())
+	if err != nil {
+		return err
 	}
 
-	// initialise the optional text embedder backing semantic search. Disabled by default, and
-	// refused outright without OpenSearch: the embedder only produces vectors, and OpenSearch's
-	// k-NN index is the only place this service can put them, so enabling one without the other
-	// would cost every write an embedding call whose result nothing could ever search. Failing at
-	// startup says that once, where a warning would leave it to be inferred from search results
-	// that never improve.
-	embedder := embed.NewNoop()
-
-	if viper.GetBool("llm.embedding.enabled") {
-		if !viper.GetBool("opensearch.enabled") {
-			return fmt.Errorf("llm.embedding.enabled requires opensearch.enabled: semantic search stores its vectors in the OpenSearch k-NN index, and no other backend provides one")
-		}
-
-		provider := llmProvider("llm.embedding.provider")
-
-		log.Debugf("initialising the %s embedder", provider)
-
-		e, err := newEmbedder(provider, embedderConfigFromViper())
-		if err != nil {
-			return fmt.Errorf("failed to initialise the %s embedder: %w", provider, err)
-		}
-
-		embedder = e
-
-		log.Infof("semantic search enabled, embedding with model '%s' via %s", embedder.Model(), provider)
+	embedder, err := initEmbedder(embedderSetupFromViper())
+	if err != nil {
+		return err
 	}
 
-	// initialise the optional object store backing the Export/Import RPCs. Nil when neither backend
-	// is configured, which makes those RPCs fail with FAILED_PRECONDITION rather than at startup:
-	// most deployments never touch the archive surface.
-	//
-	// s3.bucket takes precedence where both are somehow set, but configProblems refuses that pair
-	// outright, so this is a tie-break that should never be reached rather than a policy.
-	var objects archive.ObjectStore
-
-	switch {
-
-	case viper.GetString("s3.bucket") != "":
-		// Credentials come from the standard AWS chain; s3.endpoint and s3.usePathStyle exist for
-		// S3-compatible stores such as MinIO.
-		log.Debug("initialising s3 object store")
-
-		store, err := archive.NewS3Store(context.Background(), archive.S3Config{
-			Endpoint:     viper.GetString("s3.endpoint"),
-			Region:       viper.GetString("s3.region"),
-			Bucket:       viper.GetString("s3.bucket"),
-			UsePathStyle: viper.GetBool("s3.usePathStyle"),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to initialise the s3 object store: %w", err)
-		}
-
-		objects = store
-
-		log.Debug("s3 object store initialised")
-
-	case viper.GetString("archive.directory") != "":
-		// The filesystem backend, for the deployment this product is actually shaped like: one
-		// binary and a directory. It exists because the archive format is the only representation
-		// that preserves a store's full state, and requiring a bucket to reach it put the offline
-		// backup of a store that is designed to forget behind infrastructure.
-		log.Debug("initialising filesystem object store")
-
-		store, err := archive.NewFileStore(viper.GetString("archive.directory"))
-		if err != nil {
-			return fmt.Errorf("failed to initialise the filesystem object store: %w", err)
-		}
-
-		objects = store
-
-		log.Infof("archiving to the local directory '%s'", store.Directory())
-
+	objects, err := initObjectStore(context.Background(), objectStoreConfigFromViper())
+	if err != nil {
+		return err
 	}
 
-	// initialise the optional outbound callback sink. The no-op unless callbacks.enabled, and the
-	// no-op is not merely a disabled feature: it gates the persisted queue's recording as well as
-	// its dispatch, so a deployment with no receiver never writes a row. Construction validates the
-	// configuration and deliberately does not dial - a receiver that happens to be down at startup
-	// is exactly what the queue exists to survive.
-	notifier := notify.NewNoop()
-
-	if viper.GetBool("callbacks.enabled") {
-		log.Debug("initialising the callback sink")
-
-		hook, err := notify.NewWebhook(notify.Config{
-			URL:           viper.GetString("callbacks.url"),
-			Token:         viper.GetString("callbacks.token"),
-			SigningSecret: viper.GetString("callbacks.signingSecret"),
-			Timeout:       time.Duration(viper.GetInt("callbacks.timeoutSeconds")) * time.Second,
-			TLS:           callbacksTLSFromViper(),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to initialise the callback sink: %w", err)
-		}
-
-		notifier = hook
-
-		// Redacted as the topology view redacts it: a webhook's secret is routinely its path, and a
-		// log line outlives the configuration it came from (TODO-3 item 168).
-		log.Infof("callbacks enabled, delivering to %s", hippocampus.RedactEndpoint(viper.GetString("callbacks.url")))
+	notifier, err := initNotifier(callbackSinkConfigFromViper())
+	if err != nil {
+		return err
 	}
 
-	// initialise auth and TLS. auth.method selects the verification scheme: "none" (the
-	// default, preserving the no-auth behaviour of every prior release), "hmac" (shared-secret
-	// HS256, tokens minted by --mint-token), or "idp" (RS256 against an identity provider's
-	// JWKS endpoint - named directly by auth.jwksUrl or resolved via OIDC discovery from
-	// auth.issuer). The boolean auth.enabled predates auth.method and remains as a deprecated
-	// alias for "hmac", consulted only when auth.method is unset, so existing configs keep
-	// working unchanged.
+	// auth.method selects the verification scheme. The boolean auth.enabled predates it and remains
+	// as a deprecated alias for "hmac", consulted only when auth.method is unset, so existing
+	// configs keep working unchanged.
 	authMethod := resolveAuthMethod()
 
-	tlsEnabled := viper.GetBool("tls.enabled")
-
-	// Built once and shared by both listeners (below) so the gRPC service and the HTTP gateway
-	// present the same certificate and enforce the same TLS floor. Loaded here so a bad
-	// certificate/key pair fails fast, before either listener starts.
-	var tlsConf *tls.Config
-
-	if tlsEnabled {
-		clientCAFile := viper.GetString("tls.clientCaFile")
-		requireClientCert := viper.GetBool("tls.requireClientCert")
-
-		cfg, err := loadServerTLS(
-			viper.GetString("tls.certFile"),
-			viper.GetString("tls.keyFile"),
-			clientCAFile,
-			requireClientCert,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to load TLS credentials: %w", err)
-		}
-
-		// Served through GetCertificate rather than as a fixed pair, so a rotated certificate is
-		// picked up without a restart; both listeners share this config (TODO-3 item 169).
-		reloader, err := newCertReloader(viper.GetString("tls.certFile"), viper.GetString("tls.keyFile"))
-		if err != nil {
-			return fmt.Errorf("failed to load TLS credentials: %w", err)
-		}
-
-		cfg.Certificates = nil
-		cfg.GetCertificate = reloader.GetCertificate
-
-		reloader.start()
-		defer reloader.close()
-
-		tlsConf = cfg
-
-		if clientCAFile != "" {
-			mode := "verified when offered"
-
-			if requireClientCert {
-				mode = "required"
-			}
-
-			log.Infof("mutual TLS enabled on both listeners: client certificates %s against %s", mode, clientCAFile)
-
-			// The probes are exempt from authentication but not from the handshake, which happens
-			// before a request has a path: requiring a certificate makes /healthz and /readyz
-			// unreachable to an orchestrator that does not carry one, and a failing liveness probe
-			// restarts a perfectly healthy instance.
-			if requireClientCert && viper.GetInt("gateway.port") > 0 {
-				log.Warn("tls.requireClientCert applies to the gateway's /healthz and /readyz too, since the handshake precedes the request: give the probe client a certificate, or terminate TLS ahead of this listener")
-			}
-		}
+	tlsConf, stopTLS, err := initServerTLS(serverTLSConfigFromViper())
+	if err != nil {
+		return err
 	}
 
-	var verifier auth.Verifier
+	defer stopTLS()
 
-	// oauth2Login, when built, is the server-side OIDC relying-party login (confidential-client
-	// Authorization Code flow). It is only available under auth.method "idp" and only when
-	// auth.oauth2.enabled is set; it is registered as /auth/* handlers on the gateway below and its
-	// session cookie is fed to the HTTP auth middleware.
-	var oauth2Login *auth.OAuth2Login
-
-	switch authMethod {
-
-	case "none":
-
-	case "hmac":
-		v, err := auth.NewHMACVerifier(hmacConfigFromViper())
-		if err != nil {
-			return fmt.Errorf("failed to initialise auth: %w", err)
-		}
-
-		verifier = v
-
-	case "idp":
-		viper.SetDefault("auth.jwksRefreshIntervalSeconds", 300)
-		viper.SetDefault("auth.roleClaim", "roles")
-		viper.SetDefault("auth.groupsClaim", "groups")
-
-		refreshInterval := time.Duration(viper.GetInt("auth.jwksRefreshIntervalSeconds")) * time.Second
-
-		v, err := auth.NewJWKSVerifier(auth.JWKSConfig{
-			JWKSURL:         viper.GetString("auth.jwksUrl"),
-			Issuer:          viper.GetString("auth.issuer"),
-			Audience:        viper.GetString("auth.audience"),
-			RefreshInterval: refreshInterval,
-			RoleClaim:       viper.GetString("auth.roleClaim"),
-			GroupsClaim:     viper.GetString("auth.groupsClaim"),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to initialise auth: %w", err)
-		}
-
-		verifier = v
-
-		warnOnUnconstrainedIdP()
-
-		if viper.GetBool("auth.oauth2.enabled") {
-			login, err := buildOAuth2Login(refreshInterval)
-			if err != nil {
-				return fmt.Errorf("failed to initialise oauth2 login: %w", err)
-			}
-
-			oauth2Login = login
-		}
-
-	default:
-		return fmt.Errorf("unknown auth.method '%s' (expected 'none', 'hmac', or 'idp')", authMethod)
+	authCfg, err := authConfigFromViper(authMethod)
+	if err != nil {
+		return err
 	}
 
-	authEnabled := verifier != nil
-
-	// A revocation list, when configured, wraps whichever verifier was built (hmac or idp) so a
-	// leaked token or decommissioned client can be cut off without rotating the signing secret for
-	// everyone. It reloads from disk on the file's mtime, so revocations take effect without a
-	// restart; a named-but-broken file fails startup rather than silently revoking nothing.
-	var revocations *auth.RevocationList
-
-	if authEnabled {
-		if path := viper.GetString("auth.revocationFile"); path != "" {
-			viper.SetDefault("auth.revocationRefreshSeconds", 30)
-
-			refresh := time.Duration(viper.GetInt("auth.revocationRefreshSeconds")) * time.Second
-
-			list, err := auth.NewRevocationList(path, refresh)
-			if err != nil {
-				return fmt.Errorf("failed to load revocation list: %w", err)
-			}
-
-			revocations = list
-			verifier = auth.NewRevokingVerifier(verifier, list)
-
-			log.Infof("token revocation enabled from '%s'", path)
-		}
-
-		// Group scoping is inert unless tokens carry a scope, so nothing needs enabling for it to
-		// work. What this key adds is the refusal of a token that arrives WITHOUT one: an unscoped
-		// token sees the whole store, so on a partitioned deployment the absence of a scope is the
-		// most dangerous shape a valid token can have, not the least. Wrapping outside the
-		// revocation decorator is deliberate but immaterial - both only inspect claims the inner
-		// verifier already produced.
-		if viper.GetBool("auth.requireGroupScope") {
-			verifier = auth.NewGroupScopedVerifier(verifier, true)
-
-			log.Info("auth.requireGroupScope is set - tokens carrying no group scope will be rejected")
-		}
-	}
-
-	if authEnabled && !tlsEnabled {
-		log.Warn("authentication is enabled but tls.enabled is false - bearer tokens will be sent in " +
-			"plaintext unless TLS is terminated upstream (e.g. by a proxy or service mesh)")
-	}
-
-	// Authorisation rides on top of authentication: it maps each RPC to a required role tier
-	// (reader/writer/admin) and rejects an authenticated caller whose token does not grant it. Built
-	// only when auth is enabled - with auth off there is no principal to authorise, so the service
-	// behaves as it always has. auth.roleMapping translates an identity provider's own group names
-	// onto the tiers (empty for hmac, where --mint-token stamps the tier names directly).
-	var authoriser *auth.Authoriser
-
-	if authEnabled {
-		var roleMapping map[string]string
-
-		if err := viper.UnmarshalKey("auth.roleMapping", &roleMapping); err != nil {
-			return fmt.Errorf("failed to read auth.roleMapping: %w", err)
-		}
-
-		a, err := auth.NewAuthoriser(roleMapping, topologyTierOverride())
-		if err != nil {
-			return fmt.Errorf("failed to initialise authorisation: %w", err)
-		}
-
-		authoriser = a
+	authSet, err := initAuth(authCfg)
+	if err != nil {
+		return err
 	}
 
 	// Rate limiting: a hierarchy of token buckets (an instance-wide ceiling, a bucket per
@@ -1276,20 +454,19 @@ func run(ctx context.Context, version versionInfo) error {
 	// level of. Off unless rateLimit.enabled, and a no-op even then until a level is given a rate.
 	limiter, err := rateLimiterFromViper()
 	if err != nil {
+		authSet.stop()
+
 		return fmt.Errorf("failed to initialise rate limiting: %w", err)
 	}
-
-	trustForwardedFor := viper.GetBool("rateLimit.trustForwardedFor")
 
 	if limiter.Active() {
 		registerRateLimitGauge(limiter)
 
-		if !authEnabled {
+		if !authSet.enabled() {
 			log.Info("rate limiting is enabled with authentication off: per-client limits are keyed on the caller's address, and no per-tier limit applies (a tier comes from a token's roles)")
 		}
 	}
 
-	// initialise the gRPC server
 	log.Debug("initialising gRPC server")
 
 	hipo := hippocampus.New(hippocampus.Dependencies{
@@ -1302,131 +479,21 @@ func run(ctx context.Context, version versionInfo) error {
 		Version:    version.Version,
 	}, serverConfig(authMethod))
 
-	// Panic recovery runs first (outermost) so it catches a panic from any handler or later
-	// interceptor and returns codes.Internal rather than letting it crash the process. RPC metrics
-	// run next, so a request rejected by authentication or a rate limit still appears in the rate
-	// and error counts. Auth follows, so an unauthenticated request is still rejected before the
-	// purge check or the handler does any work on it.
-	interceptors := []grpc.UnaryServerInterceptor{InterceptorRecoverPanic, InterceptorMetrics}
-
-	// The instance-wide ceiling goes ahead of authentication: a flood of unauthenticated requests
-	// is exactly what it exists to bound, and behind the verifier it would only ever bound requests
-	// the service had already paid to verify.
-	if limiter.ArrivalActive() {
-		interceptors = append(interceptors, InterceptorRateLimitArrival(limiter))
-	}
-
-	if authEnabled {
-		// Authentication first (rejects an invalid/absent token), then authorisation (rejects a
-		// valid token whose role does not grant the RPC), both ahead of the purge gate and logger.
-		//
-		// The deployment view's caller registry sits BETWEEN the two, deliberately: a client whose
-		// token is valid but whose role is refused every call is exactly the one an operator goes
-		// looking for on that diagram, and behind the authoriser it would never be recorded. It is
-		// appended only when auth is on, since a caller with no verified client_id is not recorded
-		// at all.
-		interceptors = append(interceptors,
-			auth.UnaryServerInterceptor(verifier),
-			hipo.InterceptorObserveCaller,
-			authoriser.UnaryServerInterceptor(),
-		)
-	}
-
-	// The per-client and per-tier levels go after both, since both of the things they key on - the
-	// verified client id and the resolved tier - are stashed on the context by those interceptors.
-	if limiter.PrincipalActive() {
-		interceptors = append(interceptors, InterceptorRateLimitPrincipal(limiter))
-	}
-
-	interceptors = append(interceptors,
-		hipo.InterceptorBlockWhenPurgeInProgress,
-		InterceptorLogger,
-	)
-
-	serverOpts := []grpc.ServerOption{
-		grpc.ChainUnaryInterceptor(interceptors...),
-	}
-
-	// Raise the gRPC max-receive-message size above the 4 MiB default so operators can accept larger
-	// ImportBatch/single-memory payloads (Transfer keeps its own batches under transfer.maxBatchBytes
-	// by default). 0 keeps grpc-go's default.
-	if maxRecvMsgBytes := viper.GetInt("maxRecvMsgBytes"); maxRecvMsgBytes > 0 {
-		serverOpts = append(serverOpts, grpc.MaxRecvMsgSize(maxRecvMsgBytes))
-	}
-
-	// Cap the concurrent HTTP/2 streams a single connection may open, bounding the work one caller
-	// can pin at once - the cheapest first defence if the gRPC port is ever exposed beyond trusted
-	// callers. 0 (the default) keeps grpc-go's own default.
-	if maxConcurrentStreams := viper.GetInt("maxConcurrentStreams"); maxConcurrentStreams > 0 {
-		serverOpts = append(serverOpts, grpc.MaxConcurrentStreams(uint32(maxConcurrentStreams)))
-	}
-
-	// Enforce a keepalive policy so an abusive client cannot ping the server into a CPU/bandwidth
-	// spiral. minTimeSeconds is the minimum interval the server tolerates between client pings
-	// before it terminates the connection; permitWithoutStream allows keepalive pings on an idle
-	// connection. Both default to grpc-go's own policy when unset (minTimeSeconds 0 leaves it).
-	if minTime := viper.GetInt("keepalive.minTimeSeconds"); minTime > 0 {
-		serverOpts = append(serverOpts, grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             time.Duration(minTime) * time.Second,
-			PermitWithoutStream: viper.GetBool("keepalive.permitWithoutStream"),
-		}))
-	}
-
-	// The otelgrpc stats handler creates a server span for every RPC (extracting any incoming
-	// trace context) and records the standard low-cardinality RPC metrics (method, service,
-	// status code). Only installed when observability is enabled.
-	if obsCfg.TracingEnabled || obsCfg.MetricsEnabled {
-		serverOpts = append(serverOpts, grpc.StatsHandler(otelgrpc.NewServerHandler()))
-	}
-
-	if tlsConf != nil {
-		serverOpts = append(serverOpts, grpc.Creds(credentials.NewTLS(tlsConf)))
-	}
-
-	s := grpc.NewServer(serverOpts...)
-
-	hs := health.NewServer()
-	healthgrpc.RegisterHealthServer(s, hs)
-
 	// Both transports serve the audited server: every administrative mutation is one Info line with
 	// audit=true, the caller and what it did (TODO-3 item 169). The gateway calls the server
 	// directly and never runs the gRPC interceptor chain, so wrapping the served value is the one
 	// place that reaches both.
 	served := hippocampus.Audited(hipo)
 
-	contract.RegisterHippocampusServer(s, served)
+	grpcCfg := grpcServerConfigFromViper(authMethod, obsCfg)
 
-	// Server reflection lets grpcurl, Postman, Insomnia and every gRPC GUI discover the schema from
-	// a running instance instead of being handed contract/hippocampus.proto. It is the gRPC
-	// counterpart of the gateway's /v1/openapi.json.
-	//
-	// The default follows auth.method, and the reason is NOT that reflection publishes the schema -
-	// that argument was examined and dropped, because the proto and the generated swagger are both
-	// published with the source, so there is no confidentiality here to defend (openAPIHandler
-	// carries the same conclusion for the HTTP side). What is left is surface: reflection is a
-	// STREAMING RPC and every interceptor in this chain is unary, so it reaches neither the auth
-	// interceptor nor either rate limiter. It is the only thing on this port that is both
-	// unauthenticated and unthrottled, which is enough to keep the default derived rather than a
-	// flat true. Either way the choice is logged: "reflection is not working" is otherwise
-	// indistinguishable from "the tool is wrong".
-	if warning := unauthenticatedExposure(
-		authMethod,
-		viper.GetString("bindAddress"),
-		viper.GetString("gateway.bindAddress"),
-		viper.GetInt("gateway.port"),
-	); warning != "" {
-		log.Warn(warning)
-	}
-
-	reflectionEnabled, reflectionReason := reflectionSetting(authMethod)
-
-	if reflectionEnabled {
-		reflection.Register(s)
-
-		log.Infof("gRPC server reflection enabled (%s): grpcurl and gRPC GUIs can discover the schema from this instance. Set reflection.enabled to false to turn it off", reflectionReason)
-	} else {
-		log.Infof("gRPC server reflection disabled (%s): a gRPC tool must be given contract/hippocampus.proto, or a descriptor set built from it, rather than discovering the schema. Set reflection.enabled to true to turn it on", reflectionReason)
-	}
+	s, hs := newGRPCServer(grpcCfg, grpcServerDeps{
+		Hippocampus: hipo,
+		Served:      served,
+		Auth:        authSet,
+		Limiter:     limiter,
+		TLS:         tlsConf,
+	})
 
 	// A listener that fails to bind or serve sends its error here; run selects on it alongside
 	// ctx.Done so such a failure ends the process (via main's log.Fatal on the returned error)
@@ -1437,7 +504,7 @@ func run(ctx context.Context, version versionInfo) error {
 	// - e.g. "127.0.0.1" for loopback only behind a sidecar/mesh that terminates TLS; empty binds
 	// all interfaces, the previous behaviour.
 	go func() {
-		lis, err := net.Listen("tcp", viper.GetString("bindAddress")+":"+strconv.Itoa(viper.GetInt("port")))
+		lis, err := net.Listen("tcp", grpcCfg.BindAddress+":"+strconv.Itoa(grpcCfg.Port))
 		if err != nil {
 			serveErr <- fmt.Errorf("gRPC server failed to listen: %w", err)
 
@@ -1465,33 +532,21 @@ func run(ctx context.Context, version versionInfo) error {
 	stopReadiness := make(chan struct{})
 	readinessDone := readiness.updateHealth(hs, stopReadiness)
 
-	// initialise the HTTP/JSON gateway. It calls straight into hipo rather than dialing back to
-	// the gRPC listener, so there is no extra network hop or serialisation round trip. A
-	// non-positive gateway.port disables it.
+	// The HTTP/JSON gateway. A non-positive gateway.port disables it.
 	var gwServer *http.Server
 
-	if gatewayPort := viper.GetInt("gateway.port"); gatewayPort > 0 {
+	if gwCfg := gatewayConfigFromViper(authMethod); gwCfg.Port > 0 {
 		log.Debug("initialising HTTP gateway")
 
-		// Authorisation on the gateway runs as a post-routing middleware (so the matched route -
-		// hence the RPC's required tier - is known) rather than an outer HTTP wrapper. It reads the
-		// claims stashed by auth.HTTPMiddleware below, so it enforces the same policy as the gRPC
-		// interceptor from the same table. Added only when auth is enabled, mirroring the gRPC side.
-		muxOpts := gatewayMuxOptions()
-
-		if authEnabled {
-			muxOpts = append(muxOpts, runtime.WithMiddlewares(authoriser.GatewayMiddleware()))
-		}
-
-		// The per-client/per-tier limit is a gateway middleware rather than an outer HTTP wrapper,
-		// and is registered after the authoriser, because the tier it reads is stashed on the
-		// request context by that middleware - an outer wrapper would run before the tier existed.
-		if limiter.PrincipalActive() {
-			muxOpts = append(muxOpts, runtime.WithMiddlewares(rateLimitGatewayMiddleware(limiter, trustForwardedFor)))
-		}
-
-		gwMux := runtime.NewServeMux(muxOpts...)
-		if err := contract.RegisterHippocampusHandlerServer(context.Background(), gwMux, served); err != nil {
+		handler, err := newGatewayHandler(gwCfg, gatewayDeps{
+			Hippocampus: hipo,
+			Served:      served,
+			Auth:        authSet,
+			Limiter:     limiter,
+			Readiness:   readiness,
+			Version:     version,
+		})
+		if err != nil {
 			// The gRPC listener is already serving by this point, so returning straight out would
 			// leave it bound and the database open for the life of the process. main turns this into
 			// an exit, which hides that - a test calling run does not.
@@ -1500,170 +555,15 @@ func run(ctx context.Context, version versionInfo) error {
 			s.Stop()
 			_ = database.Close()
 
-			return fmt.Errorf("failed to register HTTP gateway: %w", err)
+			return err
 		}
 
-		// The Kubernetes lifecycle endpoints: /livez (liveness and startup), /readyz (readiness,
-		// database-aware and failing from the start of shutdown), and /healthz, the older name for
-		// /livez that every probe written before it existed still points at.
-		liveness := func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "version": version})
-		}
-
-		httpMux := http.NewServeMux()
-		httpMux.HandleFunc(observability.LivenessPath, liveness)
-		httpMux.HandleFunc(observability.LegacyHealthPath, liveness)
-		httpMux.HandleFunc(observability.ReadinessPath, readiness.handler())
-		// The OpenAPI document describing /v1. Enabled by default and served without a token - see
-		// openAPIHandler for why that reversed - with gateway.openapi.enabled available to remove
-		// the route outright for a deployment that wants nothing served there.
-		if openAPIEnabled() {
-			httpMux.Handle(openAPIPath, openAPIHandler())
-		} else {
-			log.Info("OpenAPI document disabled (gateway.openapi.enabled is false): /v1/openapi.json is not served, so a client must generate from contract/hippocampus.proto or a descriptor set built from it")
-		}
-		// The front-channel OIDC config the console reads to start a login. The browser fetches it
-		// before it has a token, so it must stay unauthenticated and reachable during a purge, like
-		// the page itself. The issuer defaults to auth.issuer (the same one the verifier discovers
-		// its JWKS from); scopes default to a plain openid/profile request when unset.
-		uiIssuer := viper.GetString("auth.ui.issuer")
-
-		if uiIssuer == "" {
-			uiIssuer = viper.GetString("auth.issuer")
-		}
-
-		uiScopes := viper.GetString("auth.ui.scopes")
-
-		if uiScopes == "" {
-			uiScopes = "openid profile"
-		}
-
-		// loginMode tells the console how sign-in works: server-hosted (/auth/login) when the oauth2
-		// login is built, otherwise the in-browser PKCE flow under idp, and empty otherwise.
-		loginMode := ""
-
-		if authMethod == "idp" {
-			loginMode = "browser"
-
-			if oauth2Login != nil {
-				loginMode = "server"
-			}
-		}
-
-		uiConfig := UIConfig{
-			AuthMethod: authMethod,
-			Issuer:     uiIssuer,
-			ClientID:   viper.GetString("auth.ui.clientId"),
-			Scopes:     uiScopes,
-			Audience:   viper.GetString("auth.ui.audience"),
-			LoginMode:  loginMode,
-		}
-
-		httpMux.Handle("/ui/config", uiConfigHandler(uiConfig))
-
-		// The console's own routes. Registered here rather than beside the probes above because the
-		// security headers need uiConfig: under an in-browser OIDC login the policy has to permit
-		// connections to the identity provider, which is not known until the block above has run.
-		console := map[string]http.Handler{
-			"/ui":            webUIHandler(),
-			"/ui/app.js":     webUIAssetHandler("app.js", "text/javascript; charset=utf-8"),
-			"/ui/lib.js":     webUIAssetHandler("lib.js", "text/javascript; charset=utf-8"),
-			"/ui/styles.css": webUIAssetHandler("styles.css", "text/css; charset=utf-8"),
-		}
-
-		for path, handler := range console {
-			httpMux.Handle(path, webUISecurityHeaders(uiConfig, handler))
-		}
-
-		// When the server-side login is enabled, register its handlers; middlewareOpenPaths marks them
-		// open alongside the probes and the console (they run before, or in place of, holding a
-		// token - /auth/refresh authenticates itself via the refresh cookie).
-		sessionCookie := ""
-		authOpenPaths, purgeOpenPaths := middlewareOpenPaths(oauth2Login != nil)
-
-		if oauth2Login != nil {
-			httpMux.Handle("/auth/login", http.HandlerFunc(oauth2Login.Login))
-			httpMux.Handle("/auth/callback", http.HandlerFunc(oauth2Login.Callback))
-			httpMux.Handle("/auth/refresh", http.HandlerFunc(oauth2Login.Refresh))
-			httpMux.Handle("/auth/logout", http.HandlerFunc(oauth2Login.Logout))
-
-			sessionCookie = auth.SessionCookieName
-		}
-
-		httpMux.Handle("/", gwMux)
-
-		// The gateway calls hipo directly, bypassing the gRPC interceptor chain, so the purge gate
-		// must be re-applied here or /v1/... requests would run during a purge.
-		// It is applied unconditionally (independent of auth); /healthz, /readyz, the static
-		// OpenAPI doc, the console, its front-channel config, and the login endpoints stay reachable
-		// while a purge runs.
-		handler := hipo.HTTPMiddlewareBlockWhenPurgeInProgress(httpMux, purgeOpenPaths)
-
-		// Per-request logging: the gateway never runs the gRPC interceptor chain, so without this its
-		// traffic is invisible in logs. Positioned inside auth (so unauthenticated requests are still
-		// rejected first) but around the purge gate and handler, capturing status and duration.
-		handler = httpLoggingMiddleware(handler)
-
-		// /healthz, /readyz and the OpenAPI document stay open; everything else requires a token
-		// when auth is enabled. Auth wraps the purge gate so an unauthenticated request is rejected
-		// before any other check, mirroring the gRPC chain order.
-		if authEnabled {
-			// Inside auth, so it sees the verified claims that middleware stashes, and outside
-			// everything else for the same reason its gRPC counterpart runs before the authoriser.
-			// The open paths never reach the verifier, so they carry no claims and record nothing.
-			handler = hipo.HTTPMiddlewareObserveCaller(handler)
-
-			handler = auth.HTTPMiddleware(verifier, handler, authOpenPaths, sessionCookie)
-		}
-
-		// The instance-wide ceiling wraps auth here exactly as it precedes it in the gRPC chain, so
-		// a flood is bounded before the gateway verifies the tokens in it. It is scoped to the /v1
-		// RPC surface, so the probes, the console, and the login endpoints stay reachable while it
-		// is rejecting - throttling a probe would turn a busy instance into a restarted one.
-		if limiter.ArrivalActive() {
-			handler = rateLimitArrivalMiddleware(limiter, handler)
-		}
-
-		// Cap the request body the gateway will read. Outermost so an oversized body is rejected
-		// before auth or any handler buffers it. Unset, the cap follows the gRPC transport's own
-		// (gatewayBodyLimit); an explicit 0 is the deliberate "unbounded".
-		maxRequestBytes := gatewayBodyLimit(
-			viper.IsSet("gateway.maxRequestBytes"),
-			viper.GetInt64("gateway.maxRequestBytes"),
-			viper.GetInt("maxRecvMsgBytes"),
-		)
-
-		if maxRequestBytes > 0 {
-			handler = maxRequestBytesMiddleware(handler, maxRequestBytes)
-		}
-
-		// RPC metrics wrap auth and the body-size cap so a request rejected by either is still counted
-		// in the rate and error figures, matching the gRPC chain, where the metrics interceptor also
-		// sits outside authentication.
-		handler = httpMetricsMiddleware(handler)
-
-		// Cross-origin access for browser clients that are not served by this gateway - swagger-ui,
-		// or a console hosted elsewhere. Empty by default, so a deployment that has not asked for
-		// this is byte-for-byte unchanged. corsMiddleware documents why it wraps the metrics
-		// middleware rather than sitting anywhere lower in the chain.
-		if corsOrigins := parseCORSOrigins(viper.Get("gateway.corsOrigins")); len(corsOrigins) > 0 {
-			handler = corsMiddleware(corsOrigins, handler)
-
-			log.Infof("gateway CORS enabled for %s: a browser page on those origins may call /v1. Credentials are never allowed, so a session cookie cannot be used cross-origin", strings.Join(corsOrigins, ", "))
-		}
-
-		// Panic recovery wraps everything (outermost) so a panic in any handler or middleware
-		// becomes a clean 500 rather than a dropped connection.
-		handler = recoverMiddleware(handler)
-
-		gwServer = newGatewayServer(viper.GetString("gateway.bindAddress"), gatewayPort, handler)
+		gwServer = newGatewayServer(gwCfg.BindAddress, gwCfg.Port, handler)
 
 		go func() {
 			var err error
 
-			if tlsEnabled {
+			if tlsConf != nil {
 				gwServer.TLSConfig = tlsConf
 
 				err = gwServer.ListenAndServeTLS("", "")
@@ -1755,9 +655,7 @@ func run(ctx context.Context, version versionInfo) error {
 	hipo.Stop()
 	statsStop()
 
-	if revocations != nil {
-		revocations.Stop()
-	}
+	authSet.stop()
 
 	// The gRPC server is stopped, so no new index operations can be enqueued; drain whatever is
 	// still queued before flushing observability, so the final export captures the search
@@ -1785,408 +683,6 @@ func run(ctx context.Context, version versionInfo) error {
 	_ = database.Close()
 
 	return runErr
-}
-
-// backfillEmbedderFromViper builds the embedder the --backfill-search mode re-embeds with, or the
-// no-op when semantic search is not configured.
-//
-// It fails the run rather than degrading to a keyword-only rebuild: a backfill is the tool an
-// operator reaches for precisely when the index is wrong, and one that silently produced an index
-// without vectors would look like it had fixed things.
-func backfillEmbedderFromViper() embed.Embedder {
-	if !viper.GetBool("llm.embedding.enabled") {
-		return embed.NewNoop()
-	}
-
-	embedder, err := newEmbedder(llmProvider("llm.embedding.provider"), embedderConfigFromViper())
-	if err != nil {
-		log.Fatalf("failed to initialise the embedder for the backfill: %s", err.Error())
-	}
-
-	log.Infof("backfill will re-embed with model '%s'", embedder.Model())
-
-	return embedder
-}
-
-// embedderConfigFromViper reads the llm.embedding.* keys into an embed.Config. Both providers take
-// the same config - the provider only selects which client is built from it - so the startup path
-// and the --backfill-search mode share one reading of it and cannot drift.
-func embedderConfigFromViper() embed.Config {
-
-	return embed.Config{
-		Address:      viper.GetString("llm.embedding.address"),
-		Model:        viper.GetString("llm.embedding.model"),
-		APIKey:       viper.GetString("llm.embedding.apiKey"),
-		Timeout:      time.Duration(viper.GetInt("llm.embedding.timeoutSeconds")) * time.Second,
-		BatchSize:    viper.GetInt("llm.embedding.batchSize"),
-		MaxTextBytes: viper.GetInt("llm.embedding.maxTextBytes"),
-		Dimensions:   viper.GetInt("llm.embedding.dimensions"),
-	}
-}
-
-// newEmbedder builds the embedder a provider names. The unknown case falls through to Ollama rather
-// than failing, because configProblems has already refused an unrecognised provider by the time any
-// caller reaches here - and a second, differently-worded refusal at this depth would only ever be
-// reached by a code path that had skipped validation.
-func newEmbedder(provider string, cfg embed.Config) (embed.Embedder, error) {
-	if provider == providerOpenAI {
-		return embed.NewOpenAI(cfg)
-	}
-
-	return embed.NewOllama(cfg)
-}
-
-// vectorDimensionFromViper reports the embedding width to map the k-NN field with, or 0 when
-// semantic search is not configured. It reads llm.embedding.* rather than opensearch.* because
-// the width is a property of the model, not of the cluster - the cluster merely has to be told it
-// before the first vector arrives, since a k-NN mapping fixes its dimension at index creation.
-func vectorDimensionFromViper() int {
-	if !viper.GetBool("llm.embedding.enabled") {
-		return 0
-	}
-
-	return viper.GetInt("llm.embedding.dimensions")
-}
-
-// searchConfigFromViper builds the OpenSearch client config from the opensearch.* viper keys,
-// including the opensearch.tls.* transport-security block. Both the server bootstrap and the
-// --backfill-search CLI mode use it, so the two paths stay in step.
-func searchConfigFromViper() search.Config {
-
-	return search.Config{
-		Addresses: viper.GetStringSlice("opensearch.addresses"),
-		Username:  viper.GetString("opensearch.username"),
-		Password:  viper.GetString("opensearch.password"),
-		Index:     viper.GetString("opensearch.index"),
-		QueueSize: viper.GetInt("opensearch.queueSize"),
-
-		// The k-NN field is only mapped when semantic search is on, so an index built for a
-		// deployment without an embedder is exactly the index it always was.
-		VectorDimension: vectorDimensionFromViper(),
-
-		// Worker tuning; each 0 (the default) falls back to the search package's own default.
-		ApplyTimeout:          time.Duration(viper.GetInt("opensearch.applyTimeoutSeconds")) * time.Second,
-		ApplyMaxAttempts:      viper.GetInt("opensearch.applyMaxAttempts"),
-		ApplyRetryBaseBackoff: time.Duration(viper.GetInt("opensearch.applyRetryBaseBackoffMillis")) * time.Millisecond,
-		CloseDrainTimeout:     time.Duration(viper.GetInt("opensearch.closeDrainTimeoutSeconds")) * time.Second,
-
-		TLS: search.TLSConfig{
-			CACertFile:         viper.GetString("opensearch.tls.caCertFile"),
-			CertFile:           viper.GetString("opensearch.tls.certFile"),
-			KeyFile:            viper.GetString("opensearch.tls.keyFile"),
-			InsecureSkipVerify: viper.GetBool("opensearch.tls.insecureSkipVerify"),
-		},
-	}
-}
-
-// rateLimiterFromViper assembles the rate-limit hierarchy from the rateLimit.* keys. All viper
-// reads stay here, per the repo convention; the limiter itself validates the rules and owns the
-// defaults for the per-client table's bounds, so there is one place each number is decided.
-//
-// A nil limiter (rateLimit.enabled false) is the disabled state, and every Limiter method is
-// nil-safe, so the call sites read the same whether or not it is configured.
-func rateLimiterFromViper() (*ratelimit.Limiter, error) {
-	if !viper.GetBool("rateLimit.enabled") {
-		return nil, nil
-	}
-
-	// The tier rules are read by enumerating the known tier names rather than whatever keys the
-	// config map holds, because viper resolves an environment override only for a key something
-	// asks for - iterating the map would leave HIPPOCAMPUS_RATELIMIT_TIERS_READER_REQUESTSPERSECOND
-	// silently ignored. The configured keys are then checked against the same list, so a misspelled
-	// tier is a startup error rather than a limit that never applies to anything.
-	tiers := make(map[string]ratelimit.Rule, len(auth.TierNames()))
-
-	for _, tier := range auth.TierNames() {
-		tiers[tier] = rateLimitRuleFromViper("rateLimit.tiers." + tier)
-	}
-
-	for configured := range viper.GetStringMap("rateLimit.tiers") {
-		if _, known := tiers[strings.ToLower(strings.TrimSpace(configured))]; !known {
-			return nil, fmt.Errorf("rateLimit.tiers.%s names an unknown tier (expected one of %s)",
-				configured,
-				strings.Join(auth.TierNames(), ", "),
-			)
-		}
-	}
-
-	limiter, err := ratelimit.New(ratelimit.Config{
-		Global:     rateLimitRuleFromViper("rateLimit.global"),
-		PerClient:  rateLimitRuleFromViper("rateLimit.perClient"),
-		Tiers:      tiers,
-		MaxClients: viper.GetInt("rateLimit.maxClients"),
-		ClientIdle: time.Duration(viper.GetInt("rateLimit.clientIdleSeconds")) * time.Second,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Enabled with every level left at zero is a configuration that reads as protected and is not.
-	// It is a warning rather than an error because it is also the shape of a config part-way
-	// through being written, and refusing to start on it would be the more annoying failure.
-	if !limiter.Active() {
-		log.Warn("rateLimit.enabled is true but no level has a requestsPerSecond, so nothing is limited; set rateLimit.global, rateLimit.perClient, or a rateLimit.tiers.<tier> rate")
-	}
-
-	return limiter, nil
-}
-
-// rateLimitRuleFromViper reads one level's rule. A zero requestsPerSecond leaves that level
-// unlimited, which is how each of the three is independently optional.
-func rateLimitRuleFromViper(key string) ratelimit.Rule {
-	return ratelimit.Rule{
-		RequestsPerSecond: viper.GetFloat64(key + ".requestsPerSecond"),
-		Burst:             viper.GetInt(key + ".burst"),
-	}
-}
-
-// warnOnUnconstrainedIdP warns when an idp deployment verifies nothing but the signature.
-//
-// A token is only proof of what a provider signed, not of who it was signed FOR. With auth.audience
-// unset, jwt.WithAudience is never applied, so EVERY RS256 token the provider's keys signed
-// verifies here - including one minted for a different application in the same tenant. In an
-// organisation with a single Okta/Entra/Keycloak behind several services, that is any employee's
-// token for any of them, with this service's tier then resolved from whatever roles claim it
-// happens to carry. Setting auth.audience to this service's own identifier is what makes a token
-// mean "for Hippocampus".
-//
-// The same applies to auth.issuer, one step weaker: configuring jwksUrl alone (rather than letting
-// discovery derive it from the issuer) leaves iss unchecked too, so the trust is in the key set
-// alone.
-//
-// A warning rather than a refusal, matching the short-signing-secret and auth-without-TLS
-// precedents: a single-purpose IdP whose tokens are only ever this service's is a legitimate
-// deployment, and there is no way to tell one from the other here.
-func warnOnUnconstrainedIdP() {
-	if viper.GetString("auth.audience") == "" {
-		log.Warn("auth.method is 'idp' but auth.audience is not set - every token the provider " +
-			"signs will verify, including tokens minted for other applications in the same tenant: " +
-			"set auth.audience to this service's identifier")
-	}
-
-	if viper.GetString("auth.issuer") == "" {
-		log.Warn("auth.method is 'idp' but auth.issuer is not set - the 'iss' claim is not checked, " +
-			"so trust rests entirely on the configured JWKS key set")
-	}
-}
-
-// openAPIEnabled reports whether the OpenAPI route should be registered.
-//
-// An UNSET key means enabled. That is deliberately not left to viper.SetDefault alone: the zero
-// value of a bool is the opposite of every release before this key existed, so any path that reaches
-// run() without having seeded the defaults would silently stop serving an endpoint the documentation
-// tells clients to generate from. The default is still declared in setStartupDefaults, because that
-// is the one place the configuration wizard's cross-check reads it from; this makes the behaviour
-// independent of whether it was applied.
-func openAPIEnabled() bool {
-	if viper.IsSet("gateway.openapi.enabled") {
-		return viper.GetBool("gateway.openapi.enabled")
-	}
-
-	return true
-}
-
-// reflectionSetting decides whether to register the gRPC reflection service, and returns the reason
-// alongside it so the startup line can say which of the two it took.
-//
-// The default is derived rather than fixed: reflection is a convenience for whoever is pointing a
-// tool at the instance, and a reconnaissance surface for anybody else, so it follows the one setting
-// that already distinguishes those two cases. An unauthenticated instance is a local or demo one,
-// where the whole cost of not having it is a step at the moment somebody is deciding whether this is
-// worth their afternoon; an instance configured for anybody but its owner turns it off. viper.IsSet
-// is what makes the derived default overridable in both directions - a plain GetBool could only
-// express "off", since an unset key and an explicit false read the same.
-// unauthenticatedExposure returns a warning when auth.method is none and a listener is bound beyond
-// loopback, naming the listeners, or "" (TODO-3 item 168). That pairing is the whole store open to
-// whoever can route to the host, and is a supported shape - inside a container the listener must
-// bind every interface, and the published port decides the exposure - so it is said, not refused.
-func unauthenticatedExposure(authMethod string, grpcBind string, gatewayBind string, gatewayPort int) string {
-	if authMethod != "none" {
-		return ""
-	}
-
-	var exposed []string
-
-	if !loopbackBind(grpcBind) {
-		exposed = append(exposed, "gRPC")
-	}
-
-	if gatewayPort > 0 && !loopbackBind(gatewayBind) {
-		exposed = append(exposed, "HTTP gateway")
-	}
-
-	if len(exposed) == 0 {
-		return ""
-	}
-
-	return "auth.method is 'none' and the " + strings.Join(exposed, " and ") + " listener binds beyond loopback: " +
-		"anything that can reach it can read, write and delete the whole store. Set auth.method, or bind " +
-		"127.0.0.1 (bindAddress / gateway.bindAddress) - or, in a container, publish the port on 127.0.0.1 only"
-}
-
-// loopbackBind reports whether a bind address reaches only this host. Empty binds every interface.
-func loopbackBind(address string) bool {
-	if address == "localhost" {
-		return true
-	}
-
-	ip := net.ParseIP(strings.Trim(address, "[]"))
-
-	return ip != nil && ip.IsLoopback()
-}
-
-func reflectionSetting(authMethod string) (bool, string) {
-	if viper.IsSet("reflection.enabled") {
-		return viper.GetBool("reflection.enabled"), "set by reflection.enabled"
-	}
-
-	if authMethod == "none" {
-		return true, "the default with auth.method 'none'"
-	}
-
-	return false, "the default with auth.method '" + authMethod + "'"
-}
-
-// contentIndexSetting decides whether this store keeps its own content-search index, and returns
-// the reason alongside it so the startup line can say which of the two it took.
-//
-// Derived rather than fixed, on exactly the reflectionSetting precedent above: a capability whose
-// sensible default is a function of another key, and one that is cheaper to derive than to make an
-// operator discover. A deployment running OpenSearch has a second index answering every search, and
-// main selects one backend - so the store's own index is written on every memory, before
-// compression ever sees the body, and read by nothing for the life of the store. It is the largest
-// non-body cost the store carries on every dialect; on MySQL, where a FULLTEXT index is an index on
-// a COLUMN, it is a second uncompressed copy of every body beside the compressed one.
-//
-// viper.IsSet is what makes the derived default overridable in BOTH directions, which matters more
-// here than it does for reflection. Keeping the index alongside OpenSearch is a real choice - it is
-// what a deployment falls back to when the cluster is unreachable, and what makes turning OpenSearch
-// off again free - and a plain GetBool could only ever express "off".
-func contentIndexSetting() (bool, string) {
-	if viper.IsSet("search.contentIndex.enabled") {
-		return viper.GetBool("search.contentIndex.enabled"), "set by search.contentIndex.enabled"
-	}
-
-	if viper.GetBool("opensearch.enabled") {
-		return false, "the default with opensearch.enabled: that index answers every search, so this one would be written and never read"
-	}
-
-	return true, "the default with opensearch.enabled false"
-}
-
-// contentIndexOptions turns that decision into the constructor options the db package takes. A
-// slice rather than a bool because the decision has to reach initSchema, which runs inside the
-// constructor - see db.Option.
-func contentIndexOptions(enabled bool) []db.Option {
-	if enabled {
-		return nil
-	}
-
-	return []db.Option{db.WithoutContentIndex()}
-}
-
-// topologyTierOverride turns topology.minimumTier into the per-RPC tier override NewAuthoriser
-// takes. It returns nil - meaning "leave the declared policy alone" - when the key is unset or the
-// RPC is disabled entirely, so a deployment that never touches the key gets exactly the policy
-// table's default. An unparseable tier is NOT rejected here: it is passed through so the authoriser
-// refuses it by name, keeping one error message for a bad tier wherever it was written.
-func topologyTierOverride() map[string]string {
-	if !viper.GetBool("topology.enabled") {
-		return nil
-	}
-
-	tier := strings.TrimSpace(viper.GetString("topology.minimumTier"))
-	if tier == "" {
-		return nil
-	}
-
-	return map[string]string{"GetTopology": tier}
-}
-
-// hmacConfigFromViper reads the HMAC signing configuration into an auth.HMACConfig. Centralising the
-// viper access here (per the project convention that all viper reads live in main) means the
-// --mint-token CLI and the running verifier share one interpretation of signingSecret, signingKeys,
-// and activeKid.
-func hmacConfigFromViper() auth.HMACConfig {
-	var keys []auth.SigningKey
-
-	if err := viper.UnmarshalKey("auth.signingKeys", &keys); err != nil {
-		log.Fatalf("failed to read auth.signingKeys: %s", err.Error())
-	}
-
-	return auth.HMACConfig{
-		LegacySecret: viper.GetString("auth.signingSecret"),
-		Keys:         keys,
-		ActiveKid:    viper.GetString("auth.activeKid"),
-	}
-}
-
-// buildOAuth2Login assembles the server-side OIDC login from the auth.oauth2 config block. All viper
-// reads stay here, per the repo convention. The issuer and audience default to the top-level
-// auth.issuer/auth.audience the token verifier already uses, so a single-provider deployment only
-// has to set the client credentials and redirect URL. A dedicated JWKS verifier is built to check
-// the id_token (whose audience is the client id, not the API audience), reusing the same key
-// machinery as the access-token verifier. The Secure cookie attribute follows the redirect URL's
-// scheme unless auth.oauth2.cookieSecure is set explicitly, so a Secure cookie is not silently
-// dropped on a local http rig nor omitted on an https deployment.
-func buildOAuth2Login(refreshInterval time.Duration) (*auth.OAuth2Login, error) {
-	issuer := viper.GetString("auth.oauth2.issuer")
-
-	if issuer == "" {
-		issuer = viper.GetString("auth.issuer")
-	}
-
-	audience := viper.GetString("auth.oauth2.audience")
-
-	if audience == "" {
-		audience = viper.GetString("auth.audience")
-	}
-
-	clientID := viper.GetString("auth.oauth2.clientId")
-
-	scopes := strings.Fields(viper.GetString("auth.oauth2.scopes"))
-
-	if len(scopes) == 0 {
-		scopes = []string{"openid", "profile", "email", "offline_access"}
-	}
-
-	redirectURL := viper.GetString("auth.oauth2.redirectUrl")
-
-	cookieSecure := strings.HasPrefix(strings.ToLower(redirectURL), "https")
-
-	if viper.IsSet("auth.oauth2.cookieSecure") {
-		cookieSecure = viper.GetBool("auth.oauth2.cookieSecure")
-	}
-
-	// The id_token carries the client id as its audience, so it needs its own verifier distinct from
-	// the access-token one (which enforces the API audience). Both discover from the same issuer and
-	// share the JWKS fetch/cache logic.
-	idTokenVerifier, err := auth.NewJWKSVerifier(auth.JWKSConfig{
-		JWKSURL:         viper.GetString("auth.jwksUrl"),
-		Issuer:          issuer,
-		Audience:        clientID,
-		RefreshInterval: refreshInterval,
-		RoleClaim:       viper.GetString("auth.roleClaim"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to build id_token verifier: %w", err)
-	}
-
-	return auth.NewOAuth2Login(auth.OAuth2Config{
-		Issuer:                issuer,
-		ClientID:              clientID,
-		ClientSecret:          viper.GetString("auth.oauth2.clientSecret"),
-		RedirectURL:           redirectURL,
-		Scopes:                scopes,
-		Audience:              audience,
-		IDTokenVerifier:       idTokenVerifier,
-		CookieSecure:          cookieSecure,
-		CookieDomain:          viper.GetString("auth.oauth2.cookieDomain"),
-		PostLogoutRedirectURL: viper.GetString("auth.oauth2.postLogoutRedirectUrl"),
-		SuccessRedirectURL:    viper.GetString("auth.oauth2.successRedirectUrl"),
-		SessionTTL:            time.Duration(viper.GetInt("auth.oauth2.sessionTTLSeconds")) * time.Second,
-		RefreshTTL:            time.Duration(viper.GetInt("auth.oauth2.refreshTTLSeconds")) * time.Second,
-	})
 }
 
 // resolveMintKey decides which signing secret and kid --mint-token should use. An explicit
@@ -2225,262 +721,6 @@ func resolveMintKey(cfg auth.HMACConfig) (string, string) {
 	return "", kid
 }
 
-// Gateway HTTP server hardening timeouts. ReadHeaderTimeout bounds slow-header (slowloris) clients,
-// ReadTimeout bounds reading the whole request including its body (the same attack one step later:
-// a header sent promptly and a body trickled), and IdleTimeout bounds idle keep-alive connections.
-// ReadTimeout is generous because it is a ceiling on the slowest legitimate client, not a target:
-// a body at the default cap fits inside it at well under 100 KB/s. There is deliberately no
-// WriteTimeout - Export/Import/Transfer responses can legitimately run long, and a write deadline
-// would abort them mid-stream.
-const (
-	gatewayReadHeaderTimeout = 10 * time.Second
-	gatewayReadTimeout       = 2 * time.Minute
-	gatewayIdleTimeout       = 120 * time.Second
-)
-
-// grpcDefaultMaxRecvMsgBytes is grpc-go's own receive limit, which applies when maxRecvMsgBytes is
-// left at 0.
-const grpcDefaultMaxRecvMsgBytes = 4 << 20
-
-// gatewayBodyLimit resolves the gateway's request-body ceiling (TODO-3 item 161). An explicit
-// gateway.maxRequestBytes wins, and an explicit value of 0 or less is the deliberate "unbounded".
-// Unset, the ceiling follows the gRPC transport's effective receive limit, so one request is bounded
-// alike on both transports - doubled, because the gateway reads JSON, which carries every field name
-// on every record and so runs larger than the protobuf encoding of the same request. Equal limits
-// would refuse over HTTP a batch the gRPC transport accepts.
-func gatewayBodyLimit(set bool, configured int64, maxRecvMsgBytes int) int64 {
-	if set {
-		return max(configured, 0)
-	}
-
-	grpcLimit := int64(grpcDefaultMaxRecvMsgBytes)
-
-	if maxRecvMsgBytes > 0 {
-		grpcLimit = int64(maxRecvMsgBytes)
-	}
-
-	return 2 * grpcLimit
-}
-
-// gatewayMuxOptions returns the ServeMux options every gateway wiring needs, whatever the
-// configuration adds on top (the authoriser and the rate limiter are appended by the caller when
-// they are enabled). It is a function rather than a literal at the call site so a test can build a
-// mux routed exactly as the service's is.
-//
-// The unescaping mode is load-bearing. Ids here are caller-chosen and routinely contain a "/" - an
-// at:// URI is what the event-source bridges write - and the default (UnescapingModeLegacy) routes
-// on r.URL.Path, which net/url has by then fully unescaped: a %2F inside an id has become a real
-// separator and split the id across two path segments, so no by-id route matched at all and every
-// such request 404'd. Every other mode routes on r.URL.RawPath and splits it before unescaping, so
-// an escaped id stays in one segment; a single-segment capture is then always unescaped in full
-// (grpc-gateway forces UnescapingModeAllCharacters for those regardless of the mode), which is what
-// hands the handler the id byte-for-byte as it was written. AllExceptReserved is the mode
-// grpc-gateway intends to default to in v3, so this is a step towards that default rather than away
-// from it, and it is inert for a request carrying nothing escaped: RawPath is empty then, and the
-// legacy path is taken.
-func gatewayMuxOptions() []runtime.ServeMuxOption {
-	return []runtime.ServeMuxOption{
-		runtime.WithUnescapingMode(runtime.UnescapingModeAllExceptReserved),
-
-		// The route-capture middleware is registered first so it runs outermost of the gateway
-		// middlewares: it names the RPC for httpMetricsMiddleware, and running ahead of the
-		// authoriser means a request the authoriser rejects is still counted against the RPC it was
-		// aimed at.
-		runtime.WithMiddlewares(gatewayRouteMiddleware()),
-	}
-}
-
-// newGatewayServer builds the HTTP gateway server with the hardening timeouts above. It is a
-// separate function so the timeout policy can be unit-tested without standing up the whole service.
-// bindAddress (empty by default) restricts the interface the listener binds to; empty binds all
-// interfaces, mirroring the gRPC listener's bindAddress.
-func newGatewayServer(bindAddress string, port int, handler http.Handler) *http.Server {
-	return &http.Server{
-		Addr:              bindAddress + ":" + strconv.Itoa(port),
-		Handler:           handler,
-		ReadHeaderTimeout: gatewayReadHeaderTimeout,
-		ReadTimeout:       gatewayReadTimeout,
-		IdleTimeout:       gatewayIdleTimeout,
-	}
-}
-
-// callbacksTLSFromViper reads the callback receiver's TLS block, honouring callbacks.tls.enabled
-// (TODO-3 item 163). The key was documented and offered by the wizard but never read, so an operator
-// turning the block off with insecureSkipVerify still set kept skipping verification. Explicitly
-// false now discards the block, with a warning naming what it carried; explicitly true applies it.
-// Unset, the block applies whenever it carries anything - which is how every configuration written
-// before the key was read behaves, and dropping their trust options would silently stop a
-// private-CA receiver verifying.
-func callbacksTLSFromViper() notify.TLSConfig {
-	config := notify.TLSConfig{
-		CACertFile:         viper.GetString("callbacks.tls.caCertFile"),
-		CertFile:           viper.GetString("callbacks.tls.certFile"),
-		KeyFile:            viper.GetString("callbacks.tls.keyFile"),
-		InsecureSkipVerify: viper.GetBool("callbacks.tls.insecureSkipVerify"),
-	}
-
-	if !viper.IsSet("callbacks.tls.enabled") || viper.GetBool("callbacks.tls.enabled") {
-		return config
-	}
-
-	if config != (notify.TLSConfig{}) {
-		log.Warn("callbacks.tls.enabled is false, so the trust options set beside it (caCertFile, certFile/keyFile, insecureSkipVerify) are ignored")
-	}
-
-	return notify.TLSConfig{}
-}
-
-// observabilityFlushTimeout bounds the exporter flush on a bootstrap failure. The configured
-// shutdown.timeoutSeconds is not used here: this path runs before the configuration has been
-// validated as a whole, and a startup that is already failing should not also be able to hang.
-const observabilityFlushTimeout = 5 * time.Second
-
-// flushObservability stops the exporters during a bootstrap failure, logging rather than returning
-// a problem: the caller is already returning one, and there is nothing left to do about a failed
-// flush at that point.
-func flushObservability(shutdown func(context.Context) error) {
-	ctx, cancel := context.WithTimeout(context.Background(), observabilityFlushTimeout)
-	defer cancel()
-
-	if err := shutdown(ctx); err != nil {
-		log.Errorf("failed to flush observability: %s", err.Error())
-	}
-}
-
-// loadServerTLS builds the TLS configuration shared by the gRPC listener and the HTTP gateway from
-// the configured certificate/key pair, pinning a TLS 1.2 minimum. Go's current default server
-// minimum is already TLS 1.2, but pinning it makes the floor explicit and immune to a future
-// default change, keeping weak legacy protocol versions off both listeners.
-//
-// clientCAFile turns on the other direction. Every outbound connection this project makes carries a
-// certFile/keyFile pair for mutual TLS - opensearch.tls, transfer.tls, callbacks.tls, the MCP
-// bridge, the hippo CLI and the event-source bridges, six implementations of one block - and until
-// this existed no listener here ever asked for a client certificate, so all six could only be used
-// against somebody else's terminator. Presenting a client certificate to a server that never
-// requests one fails silently, in the sense that nothing fails: the handshake completes, the
-// certificate is not sent, and the operator believes they have mutual TLS.
-//
-// It composes with the JWT auth rather than replacing it, and the two answer different questions: a
-// certificate says which PROCESS is connecting, a token says which client it is acting as and at
-// what tier. Nothing here derives an identity, a tier or a group scope from the certificate - the
-// authorisation model has one source, and a second one that silently outranked it would be worse
-// than none.
-func loadServerTLS(certFile string, keyFile string, clientCAFile string, requireClientCert bool) (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return nil, err
-	}
-
-	conf := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	}
-
-	if clientCAFile == "" {
-		// Refused rather than honoured, because Go verifies against the system roots when ClientCAs
-		// is nil: requiring a client certificate with no CA of your own admits every certificate any
-		// public CA has ever issued, which is not the restriction the key reads as.
-		if requireClientCert {
-			return nil, fmt.Errorf("tls.requireClientCert is set without tls.clientCaFile: a client certificate can only be required against a CA bundle you nominate")
-		}
-
-		return conf, nil
-	}
-
-	pem, err := os.ReadFile(clientCAFile)
-	if err != nil {
-		return nil, fmt.Errorf("reading tls.clientCaFile: %w", err)
-	}
-
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("tls.clientCaFile %q contains no PEM certificates", clientCAFile)
-	}
-
-	conf.ClientCAs = pool
-
-	// The two modes are a genuine choice rather than a strictness dial. Requiring a certificate is
-	// the one an operator usually wants, but it locks out every client that has not been issued one
-	// - including a browser reaching the console - so the default verifies a certificate when one is
-	// offered and admits a connection without one, which is what makes the key safe to turn on
-	// before the clients have been rolled out.
-	conf.ClientAuth = tls.VerifyClientCertIfGiven
-
-	if requireClientCert {
-		conf.ClientAuth = tls.RequireAndVerifyClientCert
-	}
-
-	return conf, nil
-}
-
-// maxRequestBytesMiddleware caps the request body the gateway will read, so an oversized (or
-// deliberately huge) body is rejected by the transport before a handler buffers it into memory. GET
-// requests (health, list) carry no body and are unaffected.
-//
-// An oversized body is answered 413, which takes two routes because the gateway turns any failed
-// body read into InvalidArgument and so would answer 400 - telling the client its request was
-// malformed rather than too large (TODO-3 item 161). A body declaring its length is refused before
-// the handler runs at all; one that does not (chunked) is refused when the read overflows, by
-// replacing the status the handler then writes.
-func maxRequestBytesMiddleware(next http.Handler, maxBytes int64) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body == nil || r.Body == http.NoBody {
-			next.ServeHTTP(w, r)
-
-			return
-		}
-
-		if r.ContentLength > maxBytes {
-			http.Error(w, fmt.Sprintf("request body exceeds the %d-byte limit", maxBytes), http.StatusRequestEntityTooLarge)
-
-			return
-		}
-
-		limited := &overflowRecorder{ResponseWriter: w}
-		r.Body = &overflowReader{ReadCloser: http.MaxBytesReader(w, r.Body, maxBytes), overflowed: &limited.overflowed}
-
-		next.ServeHTTP(limited, r)
-	})
-}
-
-// overflowReader notes when the body read has hit the limit, for overflowRecorder to act on.
-type overflowReader struct {
-	io.ReadCloser
-	overflowed *bool
-}
-
-func (o *overflowReader) Read(p []byte) (int, error) {
-	n, err := o.ReadCloser.Read(p)
-
-	var tooLarge *http.MaxBytesError
-	if errors.As(err, &tooLarge) {
-		*o.overflowed = true
-	}
-
-	return n, err
-}
-
-// overflowRecorder answers 413 in place of whatever error status the handler writes once the body
-// has overflowed. The read and the write happen on the handler's goroutine, so the flag needs no
-// lock.
-type overflowRecorder struct {
-	http.ResponseWriter
-	overflowed bool
-}
-
-func (o *overflowRecorder) WriteHeader(code int) {
-	if o.overflowed && code >= http.StatusBadRequest {
-		code = http.StatusRequestEntityTooLarge
-	}
-
-	o.ResponseWriter.WriteHeader(code)
-}
-
-// Unwrap lets http.ResponseController reach the underlying writer's flusher and deadlines.
-func (o *overflowRecorder) Unwrap() http.ResponseWriter {
-	return o.ResponseWriter
-}
-
 // configureEnvOverrides wires viper to read environment variables so any config key can be
 // overridden by HIPPOCAMPUS_<KEY> with dots replaced by underscores (e.g.
 // HIPPOCAMPUS_AUTH_SIGNINGSECRET, HIPPOCAMPUS_STORAGE_POSTGRES_DSN, HIPPOCAMPUS_OPENSEARCH_PASSWORD,
@@ -2493,9 +733,9 @@ func configureEnvOverrides() {
 }
 
 // validateConfig rejects settings that would make the service behave destructively. It reads
-// straight from viper (all viper access lives in main.go) and returns every problem it finds joined
-// into one error, or nil when the configuration is sound. sleep.periodSeconds is not checked here: a
-// non-positive value is a supported "no timed sleep" mode handled by autoSleep.
+// straight from viper (all viper access lives in cmd/hippocampus) and returns every problem it
+// finds joined into one error, or nil when the configuration is sound. sleep.periodSeconds is not
+// checked here: a non-positive value is a supported "no timed sleep" mode handled by autoSleep.
 func validateConfig() error {
 	return errors.Join(configProblems()...)
 }
@@ -2516,203 +756,11 @@ func validateConfig() error {
 func configProblems() []error {
 	var problems []error
 
-	if unitsOfAgeInDays := viper.GetFloat64("consolidation.unitsOfAgeInDays"); unitsOfAgeInDays <= 0 {
-		problems = append(problems, fmt.Errorf("consolidation.unitsOfAgeInDays must be greater than 0, got %v", unitsOfAgeInDays))
-	}
-
-	if method := viper.GetInt("consolidation.method"); method < 1 || method > 6 {
-		problems = append(problems, fmt.Errorf("consolidation.method must be between 1 and 6, got %d", method))
-	}
-
-	if aggressiveness := viper.GetFloat64("consolidation.aggressiveness"); aggressiveness <= 0 {
-		problems = append(problems, fmt.Errorf("consolidation.aggressiveness must be greater than 0, got %v", aggressiveness))
-	}
-
-	// A standby waits for the shared store's single-consolidator lock (TODO-3 item 169). SQLite has
-	// no shared lock to wait for, and consolidation.enabled true takes the lock at startup - so the
-	// two together would be a standby that either never promotes or never waits.
-	if viper.GetBool("consolidation.standby") {
-		switch driver := viper.GetString("storage.driver"); driver {
-
-		case "postgres", "mysql":
-
-		default:
-			problems = append(problems, fmt.Errorf("consolidation.standby needs a shared store (storage.driver postgres or mysql), got %q: there is no lock for a standby to wait on", driver))
-
-		}
-
-		if viper.GetBool("consolidation.enabled") {
-			problems = append(problems, fmt.Errorf("consolidation.standby is set with consolidation.enabled true: a standby starts as a replica (consolidation.enabled false) and takes over when the lock is free"))
-		}
-	}
-
-	// An empty index is a page or two whatever it holds, so under a floor near zero every empty index
-	// divides out to thousands of bytes an entry and is rebuilt on every cycle, to no effect. A
-	// mebibyte is far above any empty index and far below any index worth rebuilding.
-	if viper.GetBool("storage.indexRebuild.enabled") {
-		if minBytes := viper.GetInt64("storage.indexRebuild.minBytes"); minBytes < 1048576 {
-			problems = append(problems, fmt.Errorf("storage.indexRebuild.minBytes must be at least 1048576 (1 MiB), got %d: below that an empty index reads as bloated and is rebuilt every cycle", minBytes))
-		}
-
-		if perEntry := viper.GetInt64("storage.indexRebuild.maxBytesPerEntry"); perEntry <= 0 {
-			problems = append(problems, fmt.Errorf("storage.indexRebuild.maxBytesPerEntry must be greater than 0, got %d", perEntry))
-		}
-	}
-
-	if poll := viper.GetInt("consolidation.standbyPollSeconds"); poll < 0 {
-		problems = append(problems, fmt.Errorf("consolidation.standbyPollSeconds must not be negative, got %d", poll))
-	}
-
-	// Method 3's decay factor is 1 + ln(aggressiveness), which goes non-positive for any
-	// aggressiveness at or below 1/e (~0.368). calculateValue treats a non-positive factor as
-	// "never delete" (it returns MaxFloat64 to keep NaN out of eviction's sort), so such a config
-	// silently disables value-based consolidation entirely while the generic aggressiveness > 0
-	// check above passes. Reject it here so the mistake surfaces at startup rather than as a store
-	// that quietly never forgets anything.
-	if method := viper.GetInt("consolidation.method"); method == 3 {
-		if aggressiveness := viper.GetFloat64("consolidation.aggressiveness"); aggressiveness <= math.Exp(-1) {
-			problems = append(problems, fmt.Errorf("consolidation.aggressiveness must be greater than 1/e (~0.368) for consolidation.method 3, got %v", aggressiveness))
-		}
-	}
-
-	// The deletion threshold is the value every memory is compared against, so a non-positive one
-	// makes `value < threshold` false for every memory and disables value-based consolidation
-	// entirely - the same silent failure the method-3 aggressiveness check above exists to catch,
-	// reached by a much more obvious route. An unset key falls back to setStartupDefaults' value, so
-	// this refuses the mistake without making the key mandatory.
-	//
-	// It is refused only when nothing else would forget anything either, because switching value-
-	// based consolidation off is a real configuration and not always a mistake: a store with a byte
-	// capacity forgets on the capacity target alone (eviction in ascending value order), which keeps
-	// a memory for as long as the store has room for it rather than for a lifetime derived from its
-	// significance. That is the closed-loop end of the trade docs/consolidation.md's Forgetting modes
-	// section names, and neither of the two idioms this check was first written against is a
-	// substitute for it - consolidation.enabled and a non-positive sleep.periodSeconds both disable
-	// EVICTION as well, which is the mechanism the mode runs on.
-	//
-	// capacityMemories deliberately does not rescue it. A row capacity only scales the pressure that
-	// scales the threshold, and scaling a non-positive threshold leaves it non-positive; nothing
-	// evicts on the row count, so that pairing really does forget nothing.
-	//
-	// consolidation.capacityExternalBytes rescues it on exactly the same terms, and for the same
-	// reason: it is a capacity target eviction runs against, so a store carrying one forgets on the
-	// capacity target alone whether or not it also bounds its own disk. A retention controller over
-	// storage held elsewhere is precisely that configuration.
-	if threshold := viper.GetFloat64("consolidation.deletionThreshold"); threshold <= 0 {
-		capacityBytes := viper.GetInt64("consolidation.capacityBytes")
-		capacityExternalBytes := viper.GetInt64("consolidation.capacityExternalBytes")
-
-		if capacityBytes <= 0 && capacityExternalBytes <= 0 {
-			problems = append(problems, fmt.Errorf(
-				"consolidation.deletionThreshold must be greater than 0 (or set consolidation.capacityBytes or consolidation.capacityExternalBytes to forget on a capacity target alone), got %v",
-				threshold,
-			))
-		}
-	}
-
-	// The external capacity axis's two keys. A negative is meaningless on both (0 disables), and
-	// on the target it is worth catching rather than clamping: a mis-signed capacity would leave the
-	// axis inert while the configuration says it is bounded, which reads as an axis keeping up.
-	if capacityExternalBytes := viper.GetInt64("consolidation.capacityExternalBytes"); capacityExternalBytes < 0 {
-		problems = append(problems, fmt.Errorf("consolidation.capacityExternalBytes must not be negative, got %d", capacityExternalBytes))
-	}
-
-	if floor := viper.GetInt64("consolidation.capacityExternalBytesFloor"); floor < 0 {
-		problems = append(problems, fmt.Errorf("consolidation.capacityExternalBytesFloor must not be negative, got %d", floor))
-	}
-
-	// A negative retention window is meaningless (0 disables the floor). Catch it at startup rather
-	// than let a mis-signed value silently disable the guarantee that overrides the capacity target.
-	if retention := viper.GetInt("consolidation.minimumRetentionInDays"); retention < 0 {
-		problems = append(problems, fmt.Errorf("consolidation.minimumRetentionInDays must not be negative, got %d", retention))
-	}
-
-	// The maximum is a ceiling (TODO-3 item 157): 0 disables it, a negative value is a mis-signed one,
-	// and a ceiling at or below the minimum floor contradicts itself - every memory would be both
-	// protected and past its limit for the whole of the window between them.
-	maximum := viper.GetInt("consolidation.maximumRetentionInDays")
-	minimum := viper.GetInt("consolidation.minimumRetentionInDays")
-
-	switch {
-
-	case maximum < 0:
-		problems = append(problems, fmt.Errorf("consolidation.maximumRetentionInDays must not be negative, got %d", maximum))
-
-	case maximum > 0 && minimum > 0 && maximum <= minimum:
-		problems = append(problems, fmt.Errorf(
-			"consolidation.maximumRetentionInDays (%d) must be greater than consolidation.minimumRetentionInDays (%d)",
-			maximum,
-			minimum,
-		))
-
-	}
-
-	// The scheduled export (TODO-3 item 158) needs an archive store to write to. Configured without
-	// one it would start, log once, and take no backup ever - and a backup is the thing nobody checks
-	// until the day it is needed, so this is refused rather than warned about.
-	exportInterval := viper.GetInt("archive.scheduledExport.intervalHours")
-	exportKeep := viper.GetInt("archive.scheduledExport.keep")
-
-	switch {
-
-	case exportInterval < 0:
-		problems = append(problems, fmt.Errorf("archive.scheduledExport.intervalHours must not be negative, got %d", exportInterval))
-
-	case exportKeep < 0:
-		problems = append(problems, fmt.Errorf("archive.scheduledExport.keep must not be negative, got %d (0 keeps every archive)", exportKeep))
-
-	case exportInterval > 0 && viper.GetString("archive.directory") == "" && viper.GetString("s3.bucket") == "":
-		problems = append(problems, errors.New(
-			"archive.scheduledExport.intervalHours is set but there is nowhere to write the exports: set archive.directory or s3.bucket",
-		))
-
-	}
-
-	// sleep.periodSeconds is deliberately not validated: a non-positive value disables automatic
-	// timed sleep cycles (a supported mode - e.g. an import-only instance, or one driven purely by
-	// the manual Sleep RPC or the WAL trigger). autoSleep treats it as "no timed sleep".
-
-	// An empty storage.directory selects db.New's in-memory mode, which is intended for tests
-	// only - every write is lost on restart. Refuse it for the sqlite driver so it can never be
-	// reached by a real deployment. The postgres/mysql drivers use their own DSN
-	// keys, not storage.directory.
-	if viper.GetString("storage.driver") == "sqlite" && viper.GetString("storage.directory") == "" {
-		problems = append(problems, fmt.Errorf("storage.directory must be set for storage.driver 'sqlite' (an empty directory selects the test-only in-memory database)"))
-	}
-
-	// Two object-store backends both configured. Only one can back Export/Import, so this is a
-	// configuration whose author believes something the service does not do - and it is worth
-	// refusing rather than resolving, because the two disagree about where the archives went, which
-	// is the sort of thing found out when one is needed.
-	if viper.GetString("s3.bucket") != "" && viper.GetString("archive.directory") != "" {
-		problems = append(problems, fmt.Errorf("s3.bucket and archive.directory are both set: configure exactly one object store for Export/Import"))
-	}
-
-	// The forgotten log's bounds. A negative value is meaningless (0 disables that bound), and
-	// getting the sign wrong on the one thing standing between an optional log and unbounded growth
-	// should not be discoverable only by watching the store fill.
-	if maxRows := viper.GetInt("consolidation.tombstones.maxRows"); maxRows < 0 {
-		problems = append(problems, fmt.Errorf("consolidation.tombstones.maxRows must not be negative, got %d", maxRows))
-	}
-
-	if maxAge := viper.GetInt("consolidation.tombstones.maxAgeInDays"); maxAge < 0 {
-		problems = append(problems, fmt.Errorf("consolidation.tombstones.maxAgeInDays must not be negative, got %d", maxAge))
-	}
-
-	if maxBytes := viper.GetInt64("consolidation.tombstones.maxBytes"); maxBytes < 0 {
-		problems = append(problems, fmt.Errorf("consolidation.tombstones.maxBytes must not be negative, got %d", maxBytes))
-	}
-
-	if maxBytes := viper.GetInt64("opensearch.outbox.maxBytes"); maxBytes < 0 {
-		problems = append(problems, fmt.Errorf("opensearch.outbox.maxBytes must not be negative, got %d", maxBytes))
-	}
-
-	// Cross-origin access. An entry that does not match what a browser actually sends in the Origin
-	// header - a trailing slash being the usual way to get it wrong - presents as CORS simply not
-	// working rather than as a configuration error, so refuse it at startup instead.
-	if err := validateCORSOrigins(parseCORSOrigins(viper.Get("gateway.corsOrigins"))); err != nil {
-		problems = append(problems, err)
-	}
+	problems = append(problems, consolidationProblems()...)
+	problems = append(problems, storeProblems()...)
+	problems = append(problems, archiveProblems()...)
+	problems = append(problems, searchProblems()...)
+	problems = append(problems, gatewayProblems()...)
 
 	if err := validateCallbackConfig(); err != nil {
 		problems = append(problems, err)
@@ -2729,381 +777,4 @@ func configProblems() []error {
 	problems = append(problems, llmProblems()...)
 
 	return problems
-}
-
-// llmProblems checks the two model-provider blocks. Both are optional and both fail late by nature -
-// a summariser is only reached by an RPC, and an embedder's failures are swallowed by a best-effort
-// index - so a configuration mistake here is otherwise invisible until somebody notices that a
-// feature has quietly never worked.
-func llmProblems() []error {
-	var problems []error
-
-	for _, block := range []struct {
-		enabled  string
-		provider string
-		address  string
-	}{
-		{enabled: "llm.enabled", provider: "llm.provider", address: "llm.address"},
-		{enabled: "llm.embedding.enabled", provider: "llm.embedding.provider", address: "llm.embedding.address"},
-	} {
-		if !viper.GetBool(block.enabled) {
-			continue
-		}
-
-		provider := llmProvider(block.provider)
-
-		switch provider {
-
-		case providerOllama:
-			// Nothing further: the native client's defaults are this block's defaults.
-
-		case providerOpenAI:
-			// The defaults describe the Ollama provider, so an openai one that never named its own
-			// endpoint is pointed at an Ollama port. It would answer 404 to every call, which
-			// presents as a model server that is up and refusing rather than as a setting nobody
-			// filled in. Ollama's own OpenAI-compatible endpoint is a legitimate target here, but it
-			// lives at /v1 and so does not collide with this.
-			if strings.TrimRight(viper.GetString(block.address), "/") == defaultOllamaAddress {
-				problems = append(problems, fmt.Errorf(
-					"%s is '%s' but %s is still the Ollama default '%s': set it to the base URL of your endpoint, including its version path (e.g. https://api.openai.com/v1, or %s/v1 for Ollama's own OpenAI-compatible API)",
-					block.provider, providerOpenAI, block.address, defaultOllamaAddress, defaultOllamaAddress,
-				))
-			}
-
-		default:
-			problems = append(problems, fmt.Errorf(
-				"%s must be '%s' or '%s', got '%s'",
-				block.provider, providerOllama, providerOpenAI, provider,
-			))
-
-		}
-	}
-
-	return problems
-}
-
-// validateMetricsEndpoint checks the Prometheus scrape endpoint's settings.
-//
-// Every failure here has the same shape, and it is the one a metrics endpoint is worst at
-// reporting: the process starts, the configuration looks enabled, and nothing is ever scraped. A
-// scraper's own view of that is an instance that is simply down, which sends an operator to look at
-// the service rather than at the four lines of configuration that describe where it is listening.
-// So refuse each of them at startup, where the message can name the key.
-func validateMetricsEndpoint() error {
-	if !viper.GetBool("observability.prometheus.enabled") {
-		return nil
-	}
-
-	if port := viper.GetInt("observability.prometheus.port"); port <= 0 || port > 65535 {
-		return fmt.Errorf("observability.prometheus.port must be between 1 and 65535 when observability.prometheus.enabled is set, got %d", port)
-	}
-
-	if path := viper.GetString("observability.prometheus.path"); !strings.HasPrefix(path, "/") {
-		return fmt.Errorf("observability.prometheus.path must begin with '/', got %q", path)
-	}
-
-	// A port collision is refused rather than left to the listener, because only one of the two
-	// binds fails and which one depends on the order they are started in. The gRPC port is the one
-	// that would win here, so the message an operator would otherwise get is about the metrics
-	// listener when the mistake is as likely to be in the other key.
-	for key, port := range map[string]int{"port": viper.GetInt("port"), "gateway.port": viper.GetInt("gateway.port")} {
-		if port > 0 && port == viper.GetInt("observability.prometheus.port") {
-			return fmt.Errorf("observability.prometheus.port is %d, which %s is already using: the scrape endpoint needs a listener of its own", port, key)
-		}
-	}
-
-	return nil
-}
-
-// validateCallbackConfig checks the outbound callback settings.
-//
-// A missing URL is fatal rather than a warning: callbacks.enabled with nothing to send to would
-// record a row per forgotten memory into a queue that can never drain, which is the one arrangement
-// the feature is built to avoid. Everything else here is a bound, where a negative value is a typo
-// and 0 deliberately means "no bound".
-func validateCallbackConfig() error {
-	if !viper.GetBool("callbacks.enabled") {
-		return nil
-	}
-
-	url := strings.TrimSpace(viper.GetString("callbacks.url"))
-	if url == "" {
-		return fmt.Errorf("callbacks.url is required when callbacks.enabled is set (or inject it as HIPPOCAMPUS_CALLBACKS_URL)")
-	}
-
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return fmt.Errorf("callbacks.url must be an http:// or https:// URL, got %q", url)
-	}
-
-	bounds := map[string]int{
-		"callbacks.timeoutSeconds":          viper.GetInt("callbacks.timeoutSeconds"),
-		"callbacks.maxBodyBytes":            viper.GetInt("callbacks.maxBodyBytes"),
-		"callbacks.maxIdsPerDelivery":       viper.GetInt("callbacks.maxIdsPerDelivery"),
-		"callbacks.maxRows":                 viper.GetInt("callbacks.maxRows"),
-		"callbacks.maxBytes":                viper.GetInt("callbacks.maxBytes"),
-		"callbacks.maxAgeHours":             viper.GetInt("callbacks.maxAgeHours"),
-		"callbacks.batchSize":               viper.GetInt("callbacks.batchSize"),
-		"callbacks.retryBaseBackoffSeconds": viper.GetInt("callbacks.retryBaseBackoffSeconds"),
-		"callbacks.retryMaxBackoffSeconds":  viper.GetInt("callbacks.retryMaxBackoffSeconds"),
-		"callbacks.atRiskLimit":             viper.GetInt("callbacks.atRiskLimit"),
-	}
-
-	for key, value := range bounds {
-		if value < 0 {
-			return fmt.Errorf("%s must not be negative, got %d", key, value)
-		}
-	}
-
-	// A body carried without a cap makes one large memory able to fill the queue and the delivery
-	// alike; a warning rather than an error, because an operator who knows their bodies are small
-	// is entitled to say so.
-	if viper.GetBool("callbacks.includeBodies") && viper.GetInt("callbacks.maxBodyBytes") <= 0 {
-		log.Warn(
-			"callbacks.includeBodies is set with no callbacks.maxBodyBytes, so a single large " +
-				"memory can be carried whole into the queue and the delivery",
-		)
-	}
-
-	// A negative margin would lower the bar below the one in force, so the delivery would leave out
-	// memories the cycle is about to take - a warning that is silent about exactly what it exists to
-	// warn about, which is worse than no warning at all.
-	if viper.GetFloat64("callbacks.atRiskMargin") < 0 {
-		return fmt.Errorf(
-			"callbacks.atRiskMargin must not be negative, got %v: it raises the threshold the at-risk scan selects on, and lowering it would omit memories the next cycle will delete",
-			viper.GetFloat64("callbacks.atRiskMargin"),
-		)
-	}
-
-	// Warned about rather than refused: it is the one callback that costs a full scan per cycle, and
-	// an operator who wants it on a store consolidating every few seconds is entitled to say so.
-	if viper.GetBool("callbacks.events.memoriesAtRisk") {
-		log.Info(
-			"callbacks.events.memoriesAtRisk is set: every sleep cycle runs an extra consolidation " +
-				"preview to build the warning, which costs roughly what the cycle itself does",
-		)
-	}
-
-	if strings.HasPrefix(url, "http://") && viper.GetString("callbacks.signingSecret") != "" {
-		log.Warn(
-			"callbacks.signingSecret is set on a plain http:// callbacks.url: the signature proves " +
-				"the body was not altered, but the body itself - which may carry memory bodies - " +
-				"travels in the clear",
-		)
-	}
-
-	if viper.GetInt("callbacks.maxRows") <= 0 && viper.GetInt("callbacks.maxAgeHours") <= 0 &&
-		viper.GetInt64("callbacks.maxBytes") <= 0 {
-		log.Warn(
-			"callbacks are enabled with none of callbacks.maxRows, callbacks.maxAgeHours or " +
-				"callbacks.maxBytes set, so an unreachable receiver will grow the queue without " +
-				"bound; it is excluded from the capacity target but not from the disk",
-		)
-	}
-
-	// The combination the byte cap exists for. A row cap bounds this queue's rows and says nothing
-	// about its size once a row can carry five hundred memory bodies: at the defaults that is
-	// maxRows x maxIdsPerDelivery x maxBodyBytes, which is a number no disk has. Warned rather than
-	// refused, because an operator who knows their bodies are small is entitled to say so - and it
-	// is the shape that starts cleanly and then misbehaves, which is what a startup warning is for.
-	if viper.GetBool("callbacks.includeBodies") && viper.GetInt64("callbacks.maxBytes") <= 0 {
-		log.Warn(
-			"callbacks.includeBodies is set with no callbacks.maxBytes: callbacks.maxRows bounds " +
-				"the queue's rows, not its size, and a row carrying memory bodies is not a fixed " +
-				"size - so nothing bounds what an unreachable receiver can add to the disk",
-		)
-	}
-
-	return validateBacklogPolicy()
-}
-
-// validateBacklogPolicy checks callbacks.backlogPolicy and the settings it changes the meaning of.
-//
-// Split out because it is the one callback setting that decides what the service is willing to LOSE,
-// and the three values fail in three different places - the far system, this disk, the workload. A
-// deployment that picked one and then configured it as though it had picked another gets the failure
-// of the one it did not choose.
-func validateBacklogPolicy() error {
-	setting := viper.GetString("callbacks.backlogPolicy")
-
-	policy, ok := hippocampus.ParseBacklogPolicy(setting)
-	if !ok {
-		return fmt.Errorf(
-			"callbacks.backlogPolicy must be one of %s, got %q",
-			strings.Join(hippocampus.BacklogPolicyNames(), ", "),
-			setting,
-		)
-	}
-
-	capped := viper.GetInt("callbacks.maxRows") > 0 ||
-		viper.GetInt("callbacks.maxAgeHours") > 0 ||
-		viper.GetInt64("callbacks.maxBytes") > 0
-
-	// A stall with no cap can never fire, so it is refused rather than warned about: every other
-	// misconfiguration here degrades to one of the two remaining policies, but this one degrades to a
-	// policy that does not exist - the caps are retained (so nothing trims the queue) AND the bound
-	// that was supposed to replace them never triggers, which is unbounded growth chosen by an
-	// operator who explicitly asked for the opposite.
-	if policy == hippocampus.BacklogStall && !capped {
-		return fmt.Errorf(
-			"callbacks.backlogPolicy is \"stall\" with none of callbacks.maxRows, callbacks.maxAgeHours " +
-				"or callbacks.maxBytes set: the stall is judged against those caps, so nothing would " +
-				"ever stall and nothing would ever be trimmed",
-		)
-	}
-
-	// The forgotten log is the PULL path behind the push one: it records the same deletions, in
-	// order, with a keyset cursor, so a receiver that was rebuilt - or whose queue an operator
-	// emptied - can page GetForgottenMemories back to its cursor and catch up. Without it, a delivery
-	// that never lands is unrecoverable however carefully the queue holds it, which is most of what
-	// retaining it was for.
-	if policy != hippocampus.BacklogAbandon && !viper.GetBool("consolidation.tombstones.enabled") {
-		log.Warnf(
-			"callbacks.backlogPolicy is %q with consolidation.tombstones.enabled off: the queue will "+
-				"hold undelivered forget-callbacks, but nothing records them anywhere else, so a "+
-				"receiver that is rebuilt or a queue that is emptied leaves those deletions "+
-				"unrecoverable - enable the forgotten log as the catch-up path",
-			setting,
-		)
-	}
-
-	// The shape the whole policy exists for: this store points at payloads it does not hold, and the
-	// callback is the only thing that will ever tell the far system to delete one. Under abandon a
-	// receiver outage leaks them permanently, and the leak grows with how well the decay cycle is
-	// working, which is the opposite of the direction a warning usually needs to point.
-	if policy == hippocampus.BacklogAbandon && viper.GetInt64("consolidation.capacityExternalBytes") > 0 {
-		log.Warn(
-			"consolidation.capacityExternalBytes is set with callbacks.backlogPolicy at its default " +
-				"of \"abandon\": this store is sizing storage it does not hold, but a receiver outage " +
-				"long enough to reach the queue's caps discards the forget-callbacks for whatever was " +
-				"deleted meanwhile, orphaning those payloads permanently - consider \"retain\" or \"stall\"",
-		)
-	}
-
-	return nil
-}
-
-// validateTopologyConfig checks the topology view's settings.
-//
-// The tier is validated here as well as in NewAuthoriser because the authoriser is only built when
-// authentication is enabled: without this, a typo in topology.minimumTier on an unauthenticated
-// instance would be accepted in silence and simply mean nothing, and would then start refusing
-// callers the day authentication was turned on.
-func validateTopologyConfig() error {
-	if !viper.GetBool("topology.enabled") {
-		return nil
-	}
-
-	if tier := strings.TrimSpace(viper.GetString("topology.minimumTier")); tier != "" {
-		if !slices.Contains(auth.TierNames(), strings.ToLower(tier)) {
-			return fmt.Errorf("topology.minimumTier must be one of %s, got %q", strings.Join(auth.TierNames(), ", "), tier)
-		}
-	}
-
-	// A probe round runs its checks in sequence, so an interval shorter than one round would leave
-	// the prober permanently behind its own schedule - ticks would be dropped, and the interval the
-	// RPC reports (which a console paces its polling by) would be a number nothing observes.
-	// A negative TTL would disable the cache rather than fail, which is a surprising way to read a
-	// typo - the same reasoning as the probe intervals below.
-	if seconds := viper.GetInt("listing.countCacheSeconds"); seconds < 0 {
-		return fmt.Errorf("listing.countCacheSeconds must not be negative, got %d", seconds)
-	}
-
-	interval := viper.GetInt("topology.probeIntervalSeconds")
-	timeout := viper.GetInt("topology.probeTimeoutSeconds")
-
-	if interval < 0 {
-		return fmt.Errorf("topology.probeIntervalSeconds must not be negative, got %d", interval)
-	}
-
-	if timeout < 0 {
-		return fmt.Errorf("topology.probeTimeoutSeconds must not be negative, got %d", timeout)
-	}
-
-	if interval > 0 && timeout > interval {
-		return fmt.Errorf("topology.probeTimeoutSeconds (%d) must not exceed topology.probeIntervalSeconds (%d)", timeout, interval)
-	}
-
-	// Zero is meaningful here rather than a fallback to the default: it turns the instance registry
-	// off. Negative is not, and would otherwise be accepted as "off" while reading like a setting.
-	if heartbeat := viper.GetInt("topology.heartbeatSeconds"); heartbeat < 0 {
-		return fmt.Errorf("topology.heartbeatSeconds must not be negative, got %d", heartbeat)
-	}
-
-	return validateTopologyComponents()
-}
-
-// validateTopologyComponents checks the declared half of the deployment view.
-//
-// It is strict, and deliberately: a declared component that cannot be probed contributes nothing to
-// the view but its own name, while looking on the diagram exactly like a live one. Every rejection
-// here is a case that would otherwise render as a permanently red - or, worse, permanently
-// plausible - box that nobody could explain.
-func validateTopologyComponents() error {
-	var components []hippocampus.TopologyComponent
-
-	if err := viper.UnmarshalKey("topology.components", &components); err != nil {
-		return fmt.Errorf("failed to read topology.components: %w", err)
-	}
-
-	if len(components) > hippocampus.MaxTopologyComponents {
-		return fmt.Errorf("topology.components has %d entries, more than the %d allowed (each one is an outbound request every probe interval)",
-			len(components), hippocampus.MaxTopologyComponents)
-	}
-
-	seen := make(map[string]bool, len(components))
-	kinds := hippocampus.TopologyComponentKinds()
-
-	for i, component := range components {
-		name := strings.TrimSpace(component.Name)
-
-		if name == "" {
-			return fmt.Errorf("topology.components[%d] has no name", i)
-		}
-
-		// The name is the node id a client keys its per-node state by, so two components sharing one
-		// would collapse into a single box that flickered between their two statuses.
-		if seen[name] {
-			return fmt.Errorf("topology.components[%d] repeats the name %q", i, name)
-		}
-
-		seen[name] = true
-
-		if !slices.Contains(kinds, strings.ToLower(strings.TrimSpace(component.Kind))) {
-			return fmt.Errorf("topology.components[%d] (%q) has kind %q, expected one of %s",
-				i, name, component.Kind, strings.Join(kinds, ", "))
-		}
-
-		if err := validateHealthURL(component.HealthURL); err != nil {
-			return fmt.Errorf("topology.components[%d] (%q): %w", i, name, err)
-		}
-	}
-
-	return nil
-}
-
-// validateHealthURL rejects a health URL this process could not actually request. An address with no
-// scheme is the one worth naming explicitly: "nats-bridge:8090" is what an operator naturally writes
-// and what url.Parse accepts as a path, so without this it would be accepted at startup and then
-// fail every probe for a reason the error message would never mention.
-func validateHealthURL(raw string) error {
-	address := strings.TrimSpace(raw)
-
-	if address == "" {
-		return fmt.Errorf("healthUrl must be set (a component that cannot be probed reports nothing the config file does not already say)")
-	}
-
-	parsed, err := url.Parse(address)
-	if err != nil {
-		return fmt.Errorf("healthUrl %q is not a valid URL: %w", address, err)
-	}
-
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("healthUrl %q must start with http:// or https://", address)
-	}
-
-	if parsed.Host == "" {
-		return fmt.Errorf("healthUrl %q names no host", address)
-	}
-
-	return nil
 }

@@ -62,7 +62,7 @@ func uiConfigHandler(cfg UIConfig) http.Handler {
 //go:embed webui
 var webUIAssets embed.FS
 
-// webUIAssetPaths are the console's request paths. main.go registers exactly these and adds them to
+// webUIAssetPaths are the console's request paths. gateway.go registers exactly these and adds them to
 // both middleware allow-lists; the drift guard reads this list rather than restating it, so an asset
 // added to webui/ without being routed and opened fails the test instead of 401ing in a browser.
 //

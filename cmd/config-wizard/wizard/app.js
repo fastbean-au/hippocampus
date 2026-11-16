@@ -8,7 +8,7 @@
 // The field schema below is the single source of truth for the form, the generated config, and the
 // validation rules; the service's own defaults are recorded against each key, so the wizard can show
 // what has been changed and emit either a complete or a minimal config. Keep the defaults and the
-// validation rules in step with cmd/hippocampus/main.go (validateConfig and the driver switch) and
+// validation rules in step with cmd/hippocampus (configProblems and initStore's driver switch) and
 // docs/configuration.md.
 
 "use strict";
@@ -2392,8 +2392,8 @@ function applyTargetPaths(targetId) {
 
 /* --------------------------------------------------------------- validation */
 
-// validate mirrors the service's own startup checks (validateConfig and the driver switch in
-// cmd/hippocampus/main.go) plus the operational advice from docs/configuration.md, so a config that
+// validate mirrors the service's own startup checks (validateConfig and initStore's driver switch in
+// cmd/hippocampus) plus the operational advice from docs/configuration.md, so a config that
 // passes here starts, and one that would only warn at startup says so here first.
 function validate() {
   const issues = [];
@@ -3270,7 +3270,7 @@ function validate() {
 
 // serviceDefault is what the service does when a key is absent from the config file - which is NOT
 // the same as the value the wizard suggests. Only a handful of keys are given a default by the
-// service itself (the viper.SetDefault calls in cmd/hippocampus/main.go), recorded as `svc` on the
+// service itself (the viper.SetDefault calls in cmd/hippocampus's set…Defaults), recorded as `svc` on the
 // field; every other absent key reads as its type's zero value. That distinction is what makes a
 // minimal config safe to ship: consolidation.method, aggressiveness, and unitsOfAgeInDays all look
 // like sensible "defaults" here, but the service has none of its own and refuses to start when they

@@ -35,7 +35,7 @@ version and links here.
   event that still holds a memory is never taken. Off the MCP surface, which lets a model act on
   records it can name and never on a set it can only describe.
 - `Purge` deletes everything; while it runs, `InterceptorBlockWhenPurgeInProgress` (registered in
-  main.go, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
+  `grpcInterceptors`, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
   `HTTPMiddlewareBlockWhenPurgeInProgress` (503) rejects them on the gateway.
 - `scope.go` is the RPC half of **group scoping** (`auth/groups.go` is the other; the decision
   record is TODO 60.1). It cannot be one chokepoint, because the RPCs do not reach the store the

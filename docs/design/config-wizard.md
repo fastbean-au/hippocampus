@@ -15,7 +15,7 @@ the generated artefacts from one source. It builds a `config.json` plus an `HIPP
 environment file for the secret-typed keys, and a Compose file / Kubernetes manifests / systemd
 unit / launchd plist / `DEPLOY.md` runbook per deployment target, all in the browser (nothing is
 transmitted, and secrets are kept out of `localStorage`). Validation mirrors `validateConfig` and
-the driver switch in `cmd/hippocampus/main.go`; the decay preview mirrors `calculateValue` in
+the driver switch in `cmd/hippocampus/store.go`; the decay preview mirrors `calculateValue` in
 `hippocampus/sleep.go`. Beyond mirroring the startup refusals, `validate()` carries a third class
 of check the service itself has no place for: **combinations in which every value is individually
 valid and the whole does not do what it looks like it does** — a cluster answering searches the

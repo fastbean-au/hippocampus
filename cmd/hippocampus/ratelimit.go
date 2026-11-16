@@ -3,15 +3,18 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net"
 	"net/http"
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -358,4 +361,65 @@ func forwardedAddress(entry string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// rateLimiterFromViper assembles the rate-limit hierarchy from the rateLimit.* keys. All viper
+// reads stay here, per the repo convention; the limiter itself validates the rules and owns the
+// defaults for the per-client table's bounds, so there is one place each number is decided.
+//
+// A nil limiter (rateLimit.enabled false) is the disabled state, and every Limiter method is
+// nil-safe, so the call sites read the same whether or not it is configured.
+func rateLimiterFromViper() (*ratelimit.Limiter, error) {
+	if !viper.GetBool("rateLimit.enabled") {
+		return nil, nil
+	}
+
+	// The tier rules are read by enumerating the known tier names rather than whatever keys the
+	// config map holds, because viper resolves an environment override only for a key something
+	// asks for - iterating the map would leave HIPPOCAMPUS_RATELIMIT_TIERS_READER_REQUESTSPERSECOND
+	// silently ignored. The configured keys are then checked against the same list, so a misspelled
+	// tier is a startup error rather than a limit that never applies to anything.
+	tiers := make(map[string]ratelimit.Rule, len(auth.TierNames()))
+
+	for _, tier := range auth.TierNames() {
+		tiers[tier] = rateLimitRuleFromViper("rateLimit.tiers." + tier)
+	}
+
+	for configured := range viper.GetStringMap("rateLimit.tiers") {
+		if _, known := tiers[strings.ToLower(strings.TrimSpace(configured))]; !known {
+			return nil, fmt.Errorf("rateLimit.tiers.%s names an unknown tier (expected one of %s)",
+				configured,
+				strings.Join(auth.TierNames(), ", "),
+			)
+		}
+	}
+
+	limiter, err := ratelimit.New(ratelimit.Config{
+		Global:     rateLimitRuleFromViper("rateLimit.global"),
+		PerClient:  rateLimitRuleFromViper("rateLimit.perClient"),
+		Tiers:      tiers,
+		MaxClients: viper.GetInt("rateLimit.maxClients"),
+		ClientIdle: time.Duration(viper.GetInt("rateLimit.clientIdleSeconds")) * time.Second,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Enabled with every level left at zero is a configuration that reads as protected and is not.
+	// It is a warning rather than an error because it is also the shape of a config part-way
+	// through being written, and refusing to start on it would be the more annoying failure.
+	if !limiter.Active() {
+		log.Warn("rateLimit.enabled is true but no level has a requestsPerSecond, so nothing is limited; set rateLimit.global, rateLimit.perClient, or a rateLimit.tiers.<tier> rate")
+	}
+
+	return limiter, nil
+}
+
+// rateLimitRuleFromViper reads one level's rule. A zero requestsPerSecond leaves that level
+// unlimited, which is how each of the three is independently optional.
+func rateLimitRuleFromViper(key string) ratelimit.Rule {
+	return ratelimit.Rule{
+		RequestsPerSecond: viper.GetFloat64(key + ".requestsPerSecond"),
+		Burst:             viper.GetInt(key + ".burst"),
+	}
 }

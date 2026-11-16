@@ -18,7 +18,7 @@ import (
 	"github.com/fastbean-au/hippocampus/hippocampus"
 )
 
-// newGatewayTestServer wires up exactly what cmd/hippocampus/main.go does to serve the HTTP
+// newGatewayTestServer wires up exactly what cmd/hippocampus's newGatewayHandler does to serve the HTTP
 // gateway: a runtime.NewServeMux() with contract.RegisterHippocampusHandlerServer registering every
 // generated request_*/response_* handler against a real *hippocampus.Server, calling straight into
 // it (no gRPC dial, no interceptor chain - the same shape main.go uses). It is wrapped in

@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"maps"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,8 +18,9 @@ import (
 // gives a default of its own: every other key must be written out, because an absent key reads as
 // its zero value and several of them (consolidation.method, aggressiveness, unitsOfAgeInDays) make
 // the service refuse to start at zero. The wizard records that knowledge as `svc:` on a field, and
-// the service's own list is the viper.SetDefault calls in cmd/hippocampus/main.go — two files that
-// would otherwise drift apart silently, producing a config that looks right and does not start.
+// the service's own list is the viper.SetDefault calls in cmd/hippocampus — split by subsystem
+// across that package's files — and the two would otherwise drift apart silently, producing a
+// config that looks right and does not start.
 //
 // These tests keep them in step in both directions.
 
@@ -32,15 +34,36 @@ var (
 func serviceDefaults(t *testing.T) map[string]string {
 	t.Helper()
 
-	source, err := os.ReadFile("../hippocampus/main.go")
+	paths, err := filepath.Glob("../hippocampus/*.go")
 	if err != nil {
-		t.Fatalf("failed to read the service's main.go: %s", err.Error())
+		t.Fatalf("failed to list the service's source: %s", err.Error())
+	}
+
+	var source strings.Builder
+
+	constants := make(map[string]string)
+
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %s", path, err.Error())
+		}
+
+		source.Write(content)
+		source.WriteString("\n")
+
+		for k, v := range stringConstants(t, path) {
+			constants[k] = v
+		}
 	}
 
 	defaults := make(map[string]string)
-	constants := stringConstants(t, "../hippocampus/main.go")
 
-	for _, match := range setDefaultPattern.FindAllStringSubmatch(string(source), -1) {
+	for _, match := range setDefaultPattern.FindAllStringSubmatch(source.String(), -1) {
 		value := normaliseLiteral(match[2])
 
 		// A default given as a named constant is still a value the wizard has to match. Resolving it
