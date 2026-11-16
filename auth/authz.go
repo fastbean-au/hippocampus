@@ -324,19 +324,35 @@ type Authoriser struct {
 // mapping whose target is not a known tier fails construction rather than silently denying every
 // bearer of that group.
 //
+// builtinRoles false drops the identity mapping, leaving roleMapping as the only way a role grants a
+// tier. It exists for providers whose role namespace is shared with other applications - Keycloak's
+// realm_access.roles commonly holds an unrelated "admin", which would otherwise be a Hippocampus
+// admin. A mapping may still name a built-in role explicitly to keep it. With the built-ins off and
+// nothing mapped no role can grant a tier, so every caller would be denied every RPC; that fails
+// construction instead.
+//
 // tierOverrides raises or lowers the required tier of an RPC named in configurableTiers, keyed by
 // bare method name and valued by tier name; nil or empty leaves every policy at its declared tier.
 // An override naming an RPC that is not configurable, or a tier that does not exist, fails
 // construction - loudly at startup, rather than by silently serving a policy the operator did not
 // ask for. Both maps are applied to the derived method/route maps only; the policy table itself is
 // never mutated, so it stays readable as the declared default.
-func NewAuthoriser(roleMapping map[string]string, tierOverrides map[string]string) (*Authoriser, error) {
+func NewAuthoriser(roleMapping map[string]string,
+	tierOverrides map[string]string,
+	builtinRoles bool,
+) (*Authoriser, error) {
 	log.Trace("func() auth.NewAuthoriser")
 
-	roleTiers := map[string]Tier{
-		"reader": TierReader,
-		"writer": TierWriter,
-		"admin":  TierAdmin,
+	if !builtinRoles && len(roleMapping) == 0 {
+		return nil, fmt.Errorf("auth: the built-in role names are disabled and roleMapping is empty, so no role can grant a tier")
+	}
+
+	roleTiers := make(map[string]Tier, len(roleMapping)+3)
+
+	if builtinRoles {
+		roleTiers["reader"] = TierReader
+		roleTiers["writer"] = TierWriter
+		roleTiers["admin"] = TierAdmin
 	}
 
 	for role, tierName := range roleMapping {

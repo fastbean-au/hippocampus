@@ -52,7 +52,11 @@ pre-handler) are the two enforcement adapters; both resolve the highest tier the
 `Claims.Roles` grant (default-closed: a token resolving to no known tier is denied every RPC) and
 stash it via `ContextWithTier`/`TierFromContext`. Roles come from the `roles` claim (or
 `auth.roleClaim` for an IdP that names it differently), mapped to tiers by `auth.roleMapping`;
-`--mint-token --role` stamps them. The authoriser is built (in `initAuth`) only when auth is enabled.
+`--mint-token --role` stamps them. The tier names also map to themselves unless `auth.builtinRoles`
+is false (idp only). That identity mapping could not be removed until TODO-3 item 188, so on a
+provider whose role namespace is shared, such as Keycloak's `realm_access.roles`, any unrelated
+`admin` role was a Hippocampus admin. It stays on by default so existing deployments keep working, and
+startup warns when a mapping is set alongside it. The authoriser is built (in `initAuth`) only when auth is enabled.
 The stashed tier drives two things: `hippocampus.Server.mayReinforce` (the reader-recall gate —
 `auth.readerRecallReinforces` decides whether a reader's `RecallMemories`/reinforcing
 `SearchMemories` actually reinforces or is downgraded to a plain read) and the `WhoAmI` RPC, which

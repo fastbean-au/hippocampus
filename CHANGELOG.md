@@ -65,6 +65,11 @@ itself which service version it was built against.
 
 ### Security
 
+- **The built-in role names can be turned off under `idp`.** `reader`, `writer` and `admin` always
+  granted their tiers, so on a shared role namespace (Keycloak's `realm_access.roles`) an unrelated
+  `admin` role was a Hippocampus admin. Set the new `auth.builtinRoles` to `false` to grant tiers
+  through `auth.roleMapping` alone. It defaults to `true`, and startup now warns when a mapping is
+  set alongside it. See [Authorisation](docs/configuration.md#authorisation).
 - **A revocation file's `clients` entries now revoke `idp` tokens.** The client was read only from
   `client_id`, which most providers leave out, so the entry loaded and revoked nothing. `azp` is now
   the fallback, and the new `auth.clientIdClaim` names another claim (Okta `cid`, Entra ID `appid`).

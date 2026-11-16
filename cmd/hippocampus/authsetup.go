@@ -41,6 +41,46 @@ func warnOnUnconstrainedIdP(audience string, issuer string) {
 	}
 }
 
+// warnOnBuiltinRoles warns when an idp deployment maps its provider's roles onto tiers but still
+// lets the built-in names reader, writer and admin grant them as well.
+//
+// A roleMapping says the provider's role names are not the tier names. Many providers share one
+// role namespace across applications, though: on Keycloak, auth.roleClaim realm_access.roles holds
+// every realm role, and an unrelated one called "admin" is common. While the built-ins are on, its
+// holder is a Hippocampus admin, with Purge, Clear and Export. auth.builtinRoles false removes them.
+//
+// No warning is given for a built-in name the mapping itself names, since the mapping then decides
+// what it grants. An empty mapping is not warned about either: there the built-in names are the only
+// way to grant a tier, so the provider must be issuing them on purpose.
+func warnOnBuiltinRoles(roleMapping map[string]string, builtinRoles bool) {
+	if !builtinRoles || len(roleMapping) == 0 {
+		return
+	}
+
+	mapped := make(map[string]struct{}, len(roleMapping))
+
+	for role := range roleMapping {
+		mapped[strings.ToLower(strings.TrimSpace(role))] = struct{}{}
+	}
+
+	var active []string
+
+	for _, name := range auth.TierNames() {
+		if _, ok := mapped[name]; !ok {
+			active = append(active, name)
+		}
+	}
+
+	if len(active) == 0 {
+		return
+	}
+
+	log.Warnf("auth.roleMapping is set but auth.builtinRoles is true - a token holding a role named %s "+
+		"is granted that tier, even when the provider issues the role for another application: set "+
+		"auth.builtinRoles to false to grant tiers through auth.roleMapping alone",
+		strings.Join(active, ", "))
+}
+
 // topologyTierOverride turns topology.minimumTier into the per-RPC tier override NewAuthoriser
 // takes. It returns nil - meaning "leave the declared policy alone" - when the key is unset or the
 // RPC is disabled entirely, so a deployment that never touches the key gets exactly the policy
@@ -179,6 +219,10 @@ type authConfig struct {
 	RoleMapping  map[string]string
 	TierOverride map[string]string
 
+	// BuiltinRoles is auth.builtinRoles: whether reader, writer and admin grant their own tiers. It
+	// is read only under idp; --mint-token stamps those names, so hmac always keeps them.
+	BuiltinRoles bool
+
 	// TLSEnabled is read alongside, since authentication without TLS is warned about.
 	TLSEnabled bool
 }
@@ -215,6 +259,7 @@ func authConfigFromViper(method string) (authConfig, error) {
 		RequireGroupScope: viper.GetBool("auth.requireGroupScope"),
 		TierOverride:      topologyTierOverride(),
 		TLSEnabled:        viper.GetBool("tls.enabled"),
+		BuiltinRoles:      true,
 	}
 
 	switch method {
@@ -227,6 +272,7 @@ func authConfigFromViper(method string) (authConfig, error) {
 		viper.SetDefault("auth.roleClaim", "roles")
 		viper.SetDefault("auth.groupsClaim", "groups")
 		viper.SetDefault("auth.clientIdClaim", "client_id")
+		viper.SetDefault("auth.builtinRoles", true)
 
 		refreshInterval := time.Duration(viper.GetInt("auth.jwksRefreshIntervalSeconds")) * time.Second
 
@@ -239,6 +285,8 @@ func authConfigFromViper(method string) (authConfig, error) {
 			GroupsClaim:     viper.GetString("auth.groupsClaim"),
 			ClientIDClaim:   viper.GetString("auth.clientIdClaim"),
 		}
+
+		cfg.BuiltinRoles = viper.GetBool("auth.builtinRoles")
 
 		if viper.GetBool("auth.oauth2.enabled") {
 			setup := oauth2SetupFromViper(refreshInterval)
@@ -296,6 +344,7 @@ func initAuth(cfg authConfig) (authSetup, error) {
 		setup.Verifier = verifier
 
 		warnOnUnconstrainedIdP(cfg.JWKS.Audience, cfg.JWKS.Issuer)
+		warnOnBuiltinRoles(cfg.RoleMapping, cfg.BuiltinRoles)
 
 		// The server-side OIDC relying-party login (confidential-client Authorization Code flow).
 		// It is only available under idp and only when auth.oauth2.enabled is set; it is
@@ -355,8 +404,9 @@ func initAuth(cfg authConfig) (authSetup, error) {
 	// (reader/writer/admin) and rejects an authenticated caller whose token does not grant it. Built
 	// only when auth is enabled - with auth off there is no principal to authorise, so the service
 	// behaves as it always has. auth.roleMapping translates an identity provider's own group names
-	// onto the tiers (empty for hmac, where --mint-token stamps the tier names directly).
-	authoriser, err := auth.NewAuthoriser(cfg.RoleMapping, cfg.TierOverride)
+	// onto the tiers (empty for hmac, where --mint-token stamps the tier names directly), and
+	// auth.builtinRoles false leaves it the only way a role grants a tier.
+	authoriser, err := auth.NewAuthoriser(cfg.RoleMapping, cfg.TierOverride, cfg.BuiltinRoles)
 	if err != nil {
 		setup.stop()
 

@@ -26,6 +26,7 @@ the service's own key reads, so a key cannot be added without a row; regenerate 
 | `archive.scheduledExport.keep` | `7` | Scheduled exports to keep | [Scheduled export](#scheduled-export) |
 | `auth.activeKid` | — | Which of auth.signingKeys --mint-token signs with | [Authentication](#authentication) |
 | `auth.audience` | — | Audience | [Authentication](#authentication) |
+| `auth.builtinRoles` | `true` | The role names reader, writer and admin grant their tiers | [Authentication](#authentication) |
 | `auth.clientIdClaim` | `"client_id"` | Client id claim | [Authentication](#authentication) |
 | `auth.enabled` | — | Deprecated alias for auth.method hmac, consulted only when auth.method is unset | [Authentication](#authentication) |
 | `auth.groupsClaim` | `"groups"` | Groups claim | [Group scoping](#group-scoping) |
@@ -1069,6 +1070,7 @@ The boolean `auth.enabled` from earlier releases remains as a deprecated alias: 
     "clientIdClaim": "client_id",
     "roleClaim": "roles",
     "roleMapping": {},
+    "builtinRoles": true,
     "readerRecallReinforces": false,
     "ui": {
         "issuer": "",
@@ -1079,7 +1081,7 @@ The boolean `auth.enabled` from earlier releases remains as a deprecated alias: 
 }
 ```
 
-`auth.roleClaim`, `auth.roleMapping`, and `auth.readerRecallReinforces` drive
+`auth.roleClaim`, `auth.roleMapping`, `auth.builtinRoles` and `auth.readerRecallReinforces` drive
 [authorisation](#authorisation) and are only consulted when authentication is enabled.
 
 `auth.ui` is the **front-channel** configuration the embedded web console (`/ui`) reads — from the
@@ -1275,8 +1277,17 @@ resolved literally first — so a provider that namespaces roles under a URI-sha
 `https://your-domain/roles`) matches as a top-level key — and, when no literal key exists, as a
 dotted path through nested objects, so Keycloak's `realm_access.roles` also resolves.
 `auth.roleMapping` translates a
-provider's own group names onto the tiers, e.g. `{ "hippo-ops": "admin", "hippo-app": "writer" }`;
-the tier names always map to themselves, so a mapping is only needed for other names.
+provider's own group names onto the tiers, e.g. `{ "hippo-ops": "admin", "hippo-app": "writer" }`.
+By default the tier names also map to themselves, so a mapping is only needed for other names.
+
+That default is a risk wherever the provider's roles are shared with other applications. With
+`auth.roleClaim: realm_access.roles` on Keycloak, every realm role reaches the service, and a user
+holding an unrelated realm role named `admin` (a common name) is a Hippocampus admin, with `Purge`,
+`Clear` and `Export`. Under `idp`, set `auth.builtinRoles` to `false` (default `true`) so that only
+`auth.roleMapping` grants a tier; a mapping can still name `reader` itself to keep that one. The
+service warns at startup when a mapping is set and a built-in name it does not mention is still
+active, and refuses to start with the built-ins off and no mapping, since then no role grants
+anything. Under `hmac` the key is ignored: `--mint-token` stamps the tier names.
 
 `RecallMemories` and `SearchMemories` are `reader`-tier: recall is a read as far as _access_ goes,
 even though it normally reinforces the memory (resets its decay clock, raises its recall count).

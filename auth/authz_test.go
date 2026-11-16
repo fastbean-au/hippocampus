@@ -84,7 +84,7 @@ func TestConfigurableTiersHavePolicies(t *testing.T) {
 // leaving a policy quietly different from the one that was configured. The Purge case is the one
 // that matters - a general override mechanism would let a config file lower it to reader.
 func TestTierOverrides(t *testing.T) {
-	a, err := NewAuthoriser(nil, map[string]string{"GetTopology": "admin"})
+	a, err := NewAuthoriser(nil, map[string]string{"GetTopology": "admin"}, true)
 	if err != nil {
 		t.Fatalf("failed to build the authoriser: %s", err.Error())
 	}
@@ -107,7 +107,7 @@ func TestTierOverrides(t *testing.T) {
 		"an RPC that does not exist":      {"Frobnicate": "reader"},
 		"a tier that does not exist":      {"GetTopology": "superuser"},
 	} {
-		if _, err := NewAuthoriser(nil, overrides); err == nil {
+		if _, err := NewAuthoriser(nil, overrides, true); err == nil {
 			t.Errorf("an override naming %s was accepted", name)
 		}
 	}
@@ -170,7 +170,7 @@ func TestParseTier(t *testing.T) {
 }
 
 func TestEffectiveTier(t *testing.T) {
-	a, err := NewAuthoriser(map[string]string{"hippo-ops": "admin"}, nil)
+	a, err := NewAuthoriser(map[string]string{"hippo-ops": "admin"}, nil, true)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -204,15 +204,72 @@ func TestEffectiveTier(t *testing.T) {
 }
 
 func TestNewAuthoriserRejectsUnknownMappingTier(t *testing.T) {
-	if _, err := NewAuthoriser(map[string]string{"group": "superuser"}, nil); err == nil {
+	if _, err := NewAuthoriser(map[string]string{"group": "superuser"}, nil, true); err == nil {
 		t.Fatalf("expected an error for an unknown mapped tier")
+	}
+}
+
+// TestEffectiveTier_BuiltinRolesDisabled covers a provider whose role namespace is shared with other
+// applications: Keycloak's realm_access.roles commonly holds an unrelated "admin". With the
+// built-in names disabled that role grants nothing, while a mapped role still resolves.
+func TestEffectiveTier_BuiltinRolesDisabled(t *testing.T) {
+	a, err := NewAuthoriser(map[string]string{"hippo-ops": "admin", "hippo-app": "writer"}, nil, false)
+	if err != nil {
+		t.Fatalf("NewAuthoriser: %s", err)
+	}
+
+	cases := []struct {
+		name  string
+		roles []string
+		want  Tier
+		found bool
+	}{
+		{"built-in admin", []string{"admin"}, tierNone, false},
+		{"every built-in name", []string{"reader", "writer", "admin"}, tierNone, false},
+		{"mapped admin", []string{"admin", "hippo-ops"}, TierAdmin, true},
+		{"mapped writer", []string{"hippo-app"}, TierWriter, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, found := a.effectiveTier(&Claims{Roles: c.roles})
+
+			if got != c.want || found != c.found {
+				t.Fatalf("effectiveTier(%v) = (%v, %v), want (%v, %v)", c.roles, got, found, c.want, c.found)
+			}
+		})
+	}
+}
+
+// TestEffectiveTier_BuiltinNameCanBeMapped shows that with the built-ins disabled a mapping may still
+// name a built-in role explicitly, which is how a deployment keeps one of them on purpose.
+func TestEffectiveTier_BuiltinNameCanBeMapped(t *testing.T) {
+	a, err := NewAuthoriser(map[string]string{"reader": "reader"}, nil, false)
+	if err != nil {
+		t.Fatalf("NewAuthoriser: %s", err)
+	}
+
+	if got, found := a.effectiveTier(&Claims{Roles: []string{"reader"}}); got != TierReader || !found {
+		t.Fatalf("effectiveTier([reader]) = (%v, %v), want (reader, true)", got, found)
+	}
+
+	if _, found := a.effectiveTier(&Claims{Roles: []string{"admin"}}); found {
+		t.Fatalf("an unmapped built-in name should not resolve a tier")
+	}
+}
+
+// TestNewAuthoriserRejectsNoRoles refuses a configuration in which no role name can grant a tier:
+// every RPC would be denied to every caller, which is never what an operator meant.
+func TestNewAuthoriserRejectsNoRoles(t *testing.T) {
+	if _, err := NewAuthoriser(nil, nil, false); err == nil {
+		t.Fatalf("expected an error when the built-ins are disabled and nothing is mapped")
 	}
 }
 
 // TestInterceptorTierMatrix drives the gRPC authorisation interceptor with a representative RPC of
 // each tier under each role, asserting the reader<writer<admin nesting is enforced.
 func TestInterceptorTierMatrix(t *testing.T) {
-	a, err := NewAuthoriser(nil, nil)
+	a, err := NewAuthoriser(nil, nil, true)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -266,7 +323,7 @@ func TestInterceptorTierMatrix(t *testing.T) {
 // TestInterceptorStashesTier confirms a successful authorisation puts the resolved tier on the
 // context, which the reinforcement gate downstream relies on.
 func TestInterceptorStashesTier(t *testing.T) {
-	a, err := NewAuthoriser(nil, nil)
+	a, err := NewAuthoriser(nil, nil, true)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -295,7 +352,7 @@ func TestInterceptorStashesTier(t *testing.T) {
 // TestInterceptorIgnoresNonHippocampus confirms the interceptor leaves the health service (and
 // anything outside the Hippocampus prefix) untouched, so probes need no role.
 func TestInterceptorIgnoresNonHippocampus(t *testing.T) {
-	a, err := NewAuthoriser(nil, nil)
+	a, err := NewAuthoriser(nil, nil, true)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -331,7 +388,7 @@ type stubHippocampusServer struct {
 // runtime.HTTPPattern is populated at middleware time and that normalisePattern matches the real
 // route templates.
 func TestGatewayMiddlewareEndToEnd(t *testing.T) {
-	a, err := NewAuthoriser(nil, nil)
+	a, err := NewAuthoriser(nil, nil, true)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -423,7 +480,7 @@ func TestTierString(t *testing.T) {
 // TestGatewayMiddlewareMissingPattern covers the fail-closed branch: a matched-looking request that
 // somehow carries no route pattern on its context is forbidden rather than allowed by default.
 func TestGatewayMiddlewareMissingPattern(t *testing.T) {
-	a, err := NewAuthoriser(nil, nil)
+	a, err := NewAuthoriser(nil, nil, true)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}

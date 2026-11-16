@@ -1004,7 +1004,7 @@ func TestTopologyTierOverride(t *testing.T) {
 
 	// The override has to be one the authoriser will actually accept - the allow-list lives there,
 	// and a value main.go builds that construction then rejects is a startup failure.
-	if _, err := auth.NewAuthoriser(nil, override); err != nil {
+	if _, err := auth.NewAuthoriser(nil, override, true); err != nil {
 		t.Errorf("the authoriser rejected main.go's own override: %s", err)
 	}
 }

@@ -982,6 +982,15 @@ const STEPS = [
             help: "One role=tier per line, for providers whose role names are not already reader/writer/admin. For example: hippocampus-ops=admin",
           },
           {
+            key: "auth.builtinRoles",
+            label: "The role names reader, writer and admin grant their tiers",
+            type: "bool",
+            def: true,
+            svc: true,
+            when: (s) => value(s, "auth.method") === "idp",
+            help: "Turn off when the provider's roles are shared with other applications, as Keycloak's realm roles are: an unrelated role called admin would otherwise be a Hippocampus admin. Off, only the role → tier mapping grants a tier.",
+          },
+          {
             key: "auth.readerRecallReinforces",
             label: "A reader's recall reinforces the memory",
             type: "bool",

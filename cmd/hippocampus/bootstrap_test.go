@@ -299,6 +299,7 @@ func TestInitAuth_BadTierOverride(t *testing.T) {
 		RevocationFile: revocations,
 		TierOverride:   map[string]string{"GetTopology": "superuser"},
 		TLSEnabled:     true,
+		BuiltinRoles:   true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "failed to initialise authorisation") {
 		t.Fatalf("expected an unknown tier to be refused, got %v", err)

@@ -20,6 +20,7 @@
     "audience": "",
     "jwksRefreshIntervalSeconds": 300,
     "clientIdClaim": "client_id",
+    "builtinRoles": true,
     "groupsClaim": "groups",
     "requireGroupScope": false
   },
