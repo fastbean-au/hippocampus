@@ -1159,8 +1159,9 @@ IdP access token, checked by the same `idp` verifier as a bearer header.
 ```
 
 When enabled, the gateway serves four endpoints — `GET /auth/login` (start the flow),
-`GET /auth/callback` (the provider's redirect target; exchanges the code, verifies the `id_token`
-signature and `nonce`, sets the session cookie), `POST /auth/refresh` (swap the refresh cookie for a
+`GET /auth/callback` (the provider's redirect target; checks the `state`, exchanges the code,
+verifies the `id_token` signature and `nonce`, sets the session cookie; a provider's `error` is
+logged at Info and the browser shown only a fixed message), `POST /auth/refresh` (swap the refresh cookie for a
 fresh access token), and `GET /auth/logout` (clear the cookies and, when the provider advertises an
 `end_session_endpoint`, RP-initiated logout) — all reachable without a token. The session cookie
 (`hippo_session`) is `HttpOnly`, `SameSite=Lax`, and `Secure` (following the `redirectUrl` scheme

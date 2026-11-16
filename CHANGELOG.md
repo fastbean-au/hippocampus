@@ -79,6 +79,11 @@ itself which service version it was built against.
   stamps it into `aud` and the verifier requires it, so deployments that share a signing secret no
   longer accept each other's tokens. Unset (the default), nothing changes. Setting it rejects every
   token minted without it, so re-mint them. See [Authentication](docs/configuration.md#authentication).
+- **The OAuth2 callback no longer shows the provider's error text.** `error` and
+  `error_description` came from the query string, so a crafted link put any text on the service's
+  domain. They are now logged, and the browser sees a fixed message. A callback whose `state` does
+  not match no longer clears the cookies of a login in progress. See
+  [Authentication](docs/configuration.md#authentication).
 
 ## [0.53.4] - 2026-11-13
 

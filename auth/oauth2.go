@@ -265,23 +265,30 @@ func (l *OAuth2Login) Callback(w http.ResponseWriter, r *http.Request) {
 
 	query := r.URL.Query()
 
-	// Clear the transient cookies up front - queued on the response before any status is written, so
-	// the deletions survive whichever branch (success redirect or error) writes the headers. The flow
-	// either completes here or is abandoned, and a leftover state/nonce/verifier must never be
-	// replayable against a later callback.
-	l.clearTransientCookies(w)
-
-	if provErr := query.Get("error"); provErr != "" {
-		l.loginError(w, fmt.Errorf("provider returned %q: %s", provErr, query.Get("error_description")))
-
-		return
-	}
-
+	// The state is checked before anything else, a provider error included: a provider echoes the
+	// state on an error response as well as on success (RFC 6749 4.1.2.1). A callback that does not
+	// carry this browser's state did not come from the login it started, so it is rejected with the
+	// transient cookies left in place - a forged link cannot cancel a login in progress.
 	state := query.Get("state")
 
 	stateCookie, err := r.Cookie(stateCookieName)
 	if err != nil || stateCookie.Value == "" || subtleMismatch(stateCookie.Value, state) {
 		l.loginError(w, fmt.Errorf("state mismatch - the login could not be verified, please try again"))
+
+		return
+	}
+
+	// Clear the transient cookies once the state has matched - queued on the response before any
+	// status is written, so the deletions survive whichever branch (success redirect or error) writes
+	// the headers. The flow either completes here or is abandoned, and a leftover state/nonce/verifier
+	// must never be replayable against a later callback.
+	l.clearTransientCookies(w)
+
+	// The provider's error and error_description are logged, never shown. They arrive in the query
+	// string, so echoing them would let anyone put text of their choosing on this domain.
+	if provErr := query.Get("error"); provErr != "" {
+		log.Infof("oauth2 provider returned %q: %s", provErr, query.Get("error_description"))
+		l.loginError(w, fmt.Errorf("the identity provider refused the sign-in"))
 
 		return
 	}

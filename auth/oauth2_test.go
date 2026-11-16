@@ -337,7 +337,7 @@ func TestOAuth2Login_CallbackProviderError(t *testing.T) {
 	idp := newFakeIDP(t, "console-client")
 	login := newTestLogin(t, idp)
 
-	req := httptest.NewRequest(http.MethodGet, "/auth/callback?error=access_denied&error_description=nope", nil)
+	req := httptest.NewRequest(http.MethodGet, "/auth/callback?error=access_denied&error_description=nope&state=state-xyz", nil)
 	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: "state-xyz"})
 	rec := httptest.NewRecorder()
 
@@ -345,6 +345,70 @@ func TestOAuth2Login_CallbackProviderError(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 on a provider error, got %d", rec.Code)
+	}
+
+	if c := cookiesByName(rec)[stateCookieName]; c == nil || c.MaxAge >= 0 {
+		t.Error("expected the state cookie to be cleared once the provider's error is accepted")
+	}
+}
+
+// TestOAuth2Login_CallbackProviderErrorNotEchoed verifies that the provider's error and
+// error_description never reach the response body. Anyone can link a victim to the callback with
+// text of their choosing, and the service must not show it on its own domain.
+func TestOAuth2Login_CallbackProviderErrorNotEchoed(t *testing.T) {
+	const crafted = "Your account is locked, call 555-0100"
+
+	idp := newFakeIDP(t, "console-client")
+	login := newTestLogin(t, idp)
+
+	target := "/auth/callback?" + url.Values{
+		"error":             {"crafted_error"},
+		"error_description": {crafted},
+		"state":             {"state-xyz"},
+	}.Encode()
+
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: "state-xyz"})
+	rec := httptest.NewRecorder()
+
+	login.Callback(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on a provider error, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	if strings.Contains(body, crafted) || strings.Contains(body, "crafted_error") {
+		t.Errorf("the provider's error text was echoed to the browser: %q", body)
+	}
+}
+
+// TestOAuth2Login_CallbackForgedErrorKeepsLogin verifies that a callback whose state does not match
+// the session's leaves the transient cookies alone, so a forged error link cannot cancel a login
+// the victim has in progress.
+func TestOAuth2Login_CallbackForgedErrorKeepsLogin(t *testing.T) {
+	idp := newFakeIDP(t, "console-client")
+	login := newTestLogin(t, idp)
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/callback?error=access_denied", nil)
+	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: "state-xyz"})
+	req.AddCookie(&http.Cookie{Name: nonceCookieName, Value: "nonce-abc"})
+	req.AddCookie(&http.Cookie{Name: pkceCookieName, Value: "pkce-verifier"})
+	rec := httptest.NewRecorder()
+
+	login.Callback(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on a forged provider error, got %d", rec.Code)
+	}
+
+	cookies := cookiesByName(rec)
+
+	for _, name := range []string{stateCookieName, nonceCookieName, pkceCookieName} {
+		if cookies[name] != nil {
+			t.Errorf("expected %s to be left alone on a state mismatch, got %+v", name, cookies[name])
+		}
 	}
 }
 
