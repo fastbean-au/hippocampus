@@ -26,6 +26,7 @@ the service's own key reads, so a key cannot be added without a row; regenerate 
 | `archive.scheduledExport.keep` | `7` | Scheduled exports to keep | [Scheduled export](#scheduled-export) |
 | `auth.activeKid` | — | Which of auth.signingKeys --mint-token signs with | [Authentication](#authentication) |
 | `auth.audience` | — | Audience | [Authentication](#authentication) |
+| `auth.clientIdClaim` | `"client_id"` | Client id claim | [Authentication](#authentication) |
 | `auth.enabled` | — | Deprecated alias for auth.method hmac, consulted only when auth.method is unset | [Authentication](#authentication) |
 | `auth.groupsClaim` | `"groups"` | Groups claim | [Group scoping](#group-scoping) |
 | `auth.issuer` | — | Issuer | [Authentication](#authentication) |
@@ -1065,6 +1066,7 @@ The boolean `auth.enabled` from earlier releases remains as a deprecated alias: 
     "issuer": "",
     "audience": "",
     "jwksRefreshIntervalSeconds": 300,
+    "clientIdClaim": "client_id",
     "roleClaim": "roles",
     "roleMapping": {},
     "readerRecallReinforces": false,
@@ -1335,6 +1337,14 @@ Two mechanisms cut a credential off before its TTL expires:
   error log, keeping the last good list in force. The check runs _after_ signature verification and
   works in front of `idp` as well as `hmac`, so a provider-issued token can be revoked locally even
   when the provider's own revocation lags.
+
+  Under `idp`, a `clients` entry matches the client the token names, and providers name it in
+  different claims. The service reads `client_id`, then the OIDC-standard `azp`, which covers
+  Keycloak, Auth0 and Entra ID v2 tokens. Okta puts it in `cid` and Entra ID v1 tokens in `appid`:
+  set `auth.clientIdClaim` to that name (a dotted path reaches into a nested object, as
+  `auth.roleClaim` does). A token whose client resolves to nothing cannot be revoked by client; it
+  also logs no `client_id` and is rate limited by `sub` or address. A `jtis` entry matches the
+  token's `jti`, which Entra ID does not issue, so revoke Entra tokens by client.
 
 ### Group scoping
 

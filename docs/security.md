@@ -55,7 +55,8 @@ that signs) — see [Key rotation](configuration.md#key-rotation-hmac). Individu
 clients are revoked ahead of their TTL by a polled `auth.revocationFile`, by `jti`, by `client_id`,
 or per-client before a cutoff timestamp — see [Revocation](configuration.md#revocation). The
 revocation file applies under `idp` too, as a local override for when the provider's own revocation
-lags.
+lags. There a `clients` entry matches `client_id` or `azp`, or the claim `auth.clientIdClaim` names
+for a provider using neither.
 
 The verified `client_id` is logged on every failing request (and, on the HTTP gateway, every
 request), so a leaked or misbehaving token can be traced back to the client it was issued to.

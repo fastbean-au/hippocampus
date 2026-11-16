@@ -912,3 +912,145 @@ func TestJWKSVerifier_NestedGroupsClaim(t *testing.T) {
 		t.Fatalf("expected groups [sales] from the nested claim, got %v", claims.Groups)
 	}
 }
+
+// signRS256Map signs a raw claim set the way an identity provider would, for the tests that need
+// claims Claims does not model (azp, cid, appid).
+func signRS256Map(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string {
+	t.Helper()
+
+	raw := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	raw.Header["kid"] = "key-1"
+
+	signed, err := raw.SignedString(key)
+	if err != nil {
+		t.Fatalf("SignedString: %s", err)
+	}
+
+	return signed
+}
+
+// newSingleKeyVerifier serves key as the only published JWKS key and builds a verifier over it
+// with cfg, filling in the URL and refresh interval.
+func newSingleKeyVerifier(t *testing.T, key *rsa.PrivateKey, cfg JWKSConfig) *JWKSVerifier {
+	t.Helper()
+
+	keySet := &testKeySet{}
+	keySet.set(testJWK("key-1", &key.PublicKey))
+
+	srv := httptest.NewServer(http.HandlerFunc(keySet.serve))
+	t.Cleanup(srv.Close)
+
+	cfg.JWKSURL = srv.URL
+	cfg.RefreshInterval = time.Minute
+
+	v, err := NewJWKSVerifier(cfg)
+	if err != nil {
+		t.Fatalf("NewJWKSVerifier: %s", err)
+	}
+
+	return v
+}
+
+// TestJWKSVerifier_RevokesAnAzpOnlyClient is the TODO-3 #187 regression: Keycloak, Auth0 and Entra
+// put the client in azp, not client_id, so a clients entry in the revocation file used to match
+// nothing and the token kept verifying until it expired.
+func TestJWKSVerifier_RevokesAnAzpOnlyClient(t *testing.T) {
+	key := testRSAKey(t)
+	v := newSingleKeyVerifier(t, key, JWKSConfig{})
+
+	list, err := NewRevocationList(writeRevocationFile(t, `{"clients":[{"clientId":"leaked-app"}]}`), time.Hour)
+	if err != nil {
+		t.Fatalf("NewRevocationList: %s", err)
+	}
+	defer list.Stop()
+
+	revoking := NewRevokingVerifier(v, list)
+
+	leaked := signRS256Map(t, key, jwt.MapClaims{
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"azp": "leaked-app",
+	})
+
+	if _, err := revoking.Verify(leaked); err == nil {
+		t.Fatal("expected a token whose azp names a revoked client to be rejected")
+	}
+
+	other := signRS256Map(t, key, jwt.MapClaims{
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"azp": "other-app",
+	})
+
+	claims, err := revoking.Verify(other)
+	if err != nil {
+		t.Fatalf("expected a different client's token to verify: %s", err)
+	}
+
+	if claims.ClientID != "other-app" {
+		t.Errorf("expected ClientID from azp, got %q", claims.ClientID)
+	}
+}
+
+// TestJWKSVerifier_ClientIDPrecedence covers where ClientID comes from: an explicit client_id wins
+// over azp, and a configured auth.clientIdClaim (Okta's cid, Entra's appid) wins over both.
+func TestJWKSVerifier_ClientIDPrecedence(t *testing.T) {
+	key := testRSAKey(t)
+
+	cases := []struct {
+		name   string
+		claim  string
+		claims jwt.MapClaims
+		want   string
+	}{
+		{
+			name:   "client_id over azp",
+			claims: jwt.MapClaims{"client_id": "from-client-id", "azp": "from-azp"},
+			want:   "from-client-id",
+		},
+		{
+			name:   "the default name behaves as unset",
+			claim:  "client_id",
+			claims: jwt.MapClaims{"azp": "from-azp"},
+			want:   "from-azp",
+		},
+		{
+			name:   "configured claim over both",
+			claim:  "cid",
+			claims: jwt.MapClaims{"cid": "from-cid", "client_id": "from-client-id", "azp": "from-azp"},
+			want:   "from-cid",
+		},
+		{
+			name:   "configured claim absent falls back",
+			claim:  "appid",
+			claims: jwt.MapClaims{"azp": "from-azp"},
+			want:   "from-azp",
+		},
+		{
+			name:   "nested configured claim",
+			claim:  "ext.client",
+			claims: jwt.MapClaims{"ext": map[string]any{"client": "from-nested"}},
+			want:   "from-nested",
+		},
+		{
+			name:   "nothing names a client",
+			claims: jwt.MapClaims{},
+			want:   "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newSingleKeyVerifier(t, key, JWKSConfig{ClientIDClaim: tc.claim})
+
+			tc.claims["exp"] = time.Now().Add(time.Hour).Unix()
+
+			claims, err := v.Verify(signRS256Map(t, key, tc.claims))
+			if err != nil {
+				t.Fatalf("Verify: %s", err)
+			}
+
+			if claims.ClientID != tc.want {
+				t.Errorf("expected ClientID %q, got %q", tc.want, claims.ClientID)
+			}
+		})
+	}
+}

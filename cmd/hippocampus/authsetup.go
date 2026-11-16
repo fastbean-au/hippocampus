@@ -226,6 +226,7 @@ func authConfigFromViper(method string) (authConfig, error) {
 		viper.SetDefault("auth.jwksRefreshIntervalSeconds", 300)
 		viper.SetDefault("auth.roleClaim", "roles")
 		viper.SetDefault("auth.groupsClaim", "groups")
+		viper.SetDefault("auth.clientIdClaim", "client_id")
 
 		refreshInterval := time.Duration(viper.GetInt("auth.jwksRefreshIntervalSeconds")) * time.Second
 
@@ -236,6 +237,7 @@ func authConfigFromViper(method string) (authConfig, error) {
 			RefreshInterval: refreshInterval,
 			RoleClaim:       viper.GetString("auth.roleClaim"),
 			GroupsClaim:     viper.GetString("auth.groupsClaim"),
+			ClientIDClaim:   viper.GetString("auth.clientIdClaim"),
 		}
 
 		if viper.GetBool("auth.oauth2.enabled") {

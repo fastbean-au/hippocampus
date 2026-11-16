@@ -27,7 +27,10 @@ keyed secret. `revocation.go` adds `RevocationList` (a JSON file of revoked `jti
 file's mtime every `auth.revocationRefreshSeconds`, failing startup on a bad initial load but
 keeping the last good set on a bad reload) and `NewRevokingVerifier`, a decorator that checks
 the list after any inner `Verifier` succeeds, so revocation composes with `idp` as well as
-`hmac`. All viper reads stay in `cmd/hippocampus`: `hmacConfigFromViper`/`resolveMintKey` there build the
+`hmac`. Under `idp` a `clients` entry is only as good as `Claims.ClientID`: most providers carry the
+client in `azp`, not `client_id`, so `JWKSVerifier` falls back to `azp` and honours
+`auth.clientIdClaim` (Okta's `cid`, Entra's `appid`). Until it did, a `clients` entry loaded, was
+counted, and revoked nothing (TODO-3 #187). All viper reads stay in `cmd/hippocampus`: `hmacConfigFromViper`/`resolveMintKey` there build the
 `HMACConfig` and pick the minting key.
 `UnaryServerInterceptor` and `HTTPMiddleware` are the two enforcement adapters — both are
 needed because the HTTP gateway calls `hipo` directly and never passes through the gRPC

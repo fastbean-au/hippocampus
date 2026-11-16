@@ -66,6 +66,14 @@ type JWKSConfig struct {
 	// (NewGroupScopedVerifier) is what turns it into a refusal rather than a silent grant. A
 	// deployment relying on group scoping against an IdP should set both keys.
 	GroupsClaim string
+
+	// ClientIDClaim names the token claim identifying the client, for a provider that uses neither
+	// client_id nor the OIDC-standard azp: Okta's "cid" or Entra ID's v1 "appid". It resolves as
+	// RoleClaim does. Empty or "client_id" reads the claims in their standard order, client_id and
+	// then azp; any other name is read first, and the standard order is the fallback when it is
+	// absent. ClientID is what a revocation file's clients entries match, so a token whose client
+	// resolves to nothing cannot be revoked by client.
+	ClientIDClaim string
 }
 
 // JWKSVerifier verifies RS256 tokens against the RSA keys published at an identity provider's
@@ -168,7 +176,40 @@ func (v *JWKSVerifier) Verify(token string) (*Claims, error) {
 		claims.Groups = stringsFromClaim(token, v.cfg.GroupsClaim)
 	}
 
+	claims.ClientID = v.clientID(token, claims.ClientID)
+
 	return &claims, nil
+}
+
+// clientID resolves the token's client: the configured auth.clientIdClaim when it names a
+// non-standard claim and that claim is present, then client_id (parsed into Claims already, and
+// passed in as parsed), then azp. Most providers put the client only in azp - Keycloak adds
+// client_id on client-credentials grants alone - so without the azp fallback a revocation file's
+// clients entries would match nothing in idp mode.
+func (v *JWKSVerifier) clientID(token string, parsed string) string {
+	if v.cfg.ClientIDClaim != "" && v.cfg.ClientIDClaim != "client_id" {
+		if id := singleStringFromClaim(token, v.cfg.ClientIDClaim); id != "" {
+			return id
+		}
+	}
+
+	if parsed != "" {
+		return parsed
+	}
+
+	return singleStringFromClaim(token, "azp")
+}
+
+// singleStringFromClaim reads a claim that names one thing, such as a client. Anything other than
+// exactly one string resolves to "", so an array claim never picks an arbitrary member.
+func singleStringFromClaim(token string, claimName string) string {
+	values := stringsFromClaim(token, claimName)
+
+	if len(values) != 1 {
+		return ""
+	}
+
+	return values[0]
 }
 
 // keyForToken is the parser's key lookup: it selects the cached RSA key matching the token's kid

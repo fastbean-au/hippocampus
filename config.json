@@ -19,6 +19,7 @@
     "issuer": "",
     "audience": "",
     "jwksRefreshIntervalSeconds": 300,
+    "clientIdClaim": "client_id",
     "groupsClaim": "groups",
     "requireGroupScope": false
   },

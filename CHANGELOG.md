@@ -63,6 +63,14 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Security
+
+- **A revocation file's `clients` entries now revoke `idp` tokens.** The client was read only from
+  `client_id`, which most providers leave out, so the entry loaded and revoked nothing. `azp` is now
+  the fallback, and the new `auth.clientIdClaim` names another claim (Okta `cid`, Entra ID `appid`).
+  An entry already in the file starts matching. Those tokens also gain a `client_id` in the request
+  log and are rate limited per client. See [Revocation](docs/configuration.md#revocation).
+
 ## [0.53.4] - 2026-11-13
 
 ### Changed

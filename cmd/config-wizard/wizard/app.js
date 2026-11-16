@@ -949,6 +949,15 @@ const STEPS = [
               value(s, "auth.method") !== "none" &&
               value(s, "auth.revocationFile") !== "",
           },
+          {
+            key: "auth.clientIdClaim",
+            label: "Client id claim",
+            type: "text",
+            def: "client_id",
+            svc: "client_id",
+            when: (s) => value(s, "auth.method") === "idp",
+            help: "The token claim naming the client, which revocation file client entries match and the request log records. client_id, then azp, are read by default; set cid for Okta or appid for Entra ID v1 tokens.",
+          },
         ],
       },
       {

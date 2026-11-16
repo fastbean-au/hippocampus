@@ -6,7 +6,9 @@ import (
 
 // Claims embeds the standard registered claims (exp, iat, ...) plus a client identifier, the
 // bearer's roles, and the groups the bearer is scoped to. ClientID identifies the bearer for
-// request logging and per-client revocation.
+// request logging, rate limiting and per-client revocation. It parses from client_id, which is what
+// --mint-token stamps; JWKSVerifier falls back to azp and honours auth.clientIdClaim, since most
+// identity providers carry the client elsewhere (see JWKSVerifier.clientID).
 // Roles carries the authorisation tiers (reader/writer/admin) the token grants; it is resolved to
 // an effective tier by the Authoriser (see authz.go). Both verifiers parse straight into this
 // struct, so a token carrying a top-level "roles" claim populates Roles without any extra work;
