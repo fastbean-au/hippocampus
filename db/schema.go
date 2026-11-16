@@ -92,7 +92,7 @@ type schemaMigration struct {
 // these steps arrived across seventeen releases, several of them are already the accumulated result
 // of earlier ones, and no store anywhere is at an intermediate point between them - every store in
 // existence has either seen all of them or is about to. What the ledger needs to be honest about is
-// the future, and it is: version 17 is where this list ends today, and a store recording 18 was
+// the future, and it is: version 18 is where this list ends today, and a store recording 19 was
 // written by something this build has not met.
 func (d *DB) migrations() []schemaMigration {
 	return []schemaMigration{
@@ -233,6 +233,17 @@ func (d *DB) migrations() []schemaMigration {
 			version: 17,
 			name:    "significance_level_unused",
 			apply:   (*DB).initSignificanceLevelMark,
+		},
+		{
+			// callback_queue.payload_key_id, the key a queued payload was sealed under
+			// (encrypt.go); memories.body_key_id arrived with it, as a core column, for the reason
+			// migrateBodyEncryption gives. The version matters more here than the columns do: a
+			// build that predates them would read a sealed body as if it were the body itself and
+			// hand ciphertext to every caller, without an error anywhere. The gate is what makes
+			// it refuse the store instead.
+			version: 18,
+			name:    "body_encryption",
+			apply:   (*DB).migrateBodyEncryption,
 		},
 	}
 }

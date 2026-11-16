@@ -212,6 +212,9 @@ the service's own key reads, so a key cannot be added without a row; regenerate 
 | `storage.compression.minBytes` | `512` | Minimum body size (bytes) | [Storage](#storage) |
 | `storage.directory` | `"./data"` | Data directory | [Storage](#storage) |
 | `storage.driver` | `"sqlite"` | Driver | [Storage](#storage) |
+| `storage.encryption.enabled` | `false` | Encrypt memory bodies | [Encryption at rest](#encryption-at-rest) |
+| `storage.encryption.key` | — | Encryption key | [Encryption at rest](#encryption-at-rest) |
+| `storage.encryption.retiredKeys` | — | Retired keys | [Encryption at rest](#encryption-at-rest) |
 | `storage.indexRebuild.enabled` | `false` | Rebuild bloated indexes | [Storage](#storage) |
 | `storage.indexRebuild.maxBytesPerEntry` | `512` | Rebuild past (bytes per entry) | [Storage](#storage) |
 | `storage.indexRebuild.minBytes` | `16777216` | Smallest index to rebuild (bytes) | [Storage](#storage) |
@@ -1608,6 +1611,74 @@ Compression is confined to the storage layer. Everything above it — the RPCs, 
 the summariser, and the export/archive format — sees plain bodies, so an archive is portable between
 instances whatever either one's setting is; an import takes the receiving instance's policy.
 
+#### Encryption at rest
+
+`storage.encryption.enabled` (**default false**) seals memory bodies before they are stored, so a
+copied SQLite file, a `pg_dump` or `mysqldump`, a backup taken with `--backup`, or an export archive
+gives nothing away without the key. Volume and database encryption protect a disk that is stolen;
+they do not protect a dump or an archive, which is the copy that usually leaks.
+
+```json
+"storage": {
+  "encryption": {
+    "enabled": true,
+    "key": "<32 random bytes, base64: openssl rand -base64 32>"
+  }
+}
+```
+
+Supply `storage.encryption.key` as `HIPPOCAMPUS_STORAGE_ENCRYPTION_KEY` rather than writing it into
+`config.json`. It must decode to exactly 32 bytes; standard and URL-safe base64 are both accepted,
+with or without padding. **Keep a copy of it somewhere the store is not.** A store whose key is
+lost cannot be read by anyone, including you.
+
+What is sealed:
+
+- **Memory bodies**, binary or not, with AES-256-GCM. Each body is sealed under a key derived for
+  that body alone from the configured key and a random salt, and is bound to its memory's id, so a
+  sealed body copied onto another row does not open. Sealing adds 33 bytes to a body, which the
+  capacity target counts. Compression happens first, so it loses nothing.
+- **Queued callback payloads**, which carry bodies under `callbacks.includeBodies`.
+- **Export archives**, written by `Export` and the scheduled export, as a sealed stream. `Import`
+  reads sealed and unsealed archives alike, so an archive written before encryption was enabled
+  still imports. An archive sealed under a key the instance does not hold is refused with
+  `FailedPrecondition`.
+
+What is not sealed is everything a query reads: ids, timestamps, significance, recall state,
+groups, event names and descriptions, links, and **metadata**. Metadata is filtered on inside the
+database, so sealing it would turn every metadata filter into a read of the whole table. Treat it,
+and the group label, as plaintext, and do not put secrets in them.
+
+**The store's own content index is dropped.** It is a plaintext copy of every body it holds, so with
+encryption on, the service drops it at startup and `SearchMemories` needs OpenSearch. The service
+refuses to start with `search.contentIndex.enabled` set to `true` beside encryption. OpenSearch
+holds bodies in the clear as well, which the service cannot change. Encrypt the cluster at rest on
+its own side, and the service warns at startup when it is on.
+
+Every row records the key it was sealed under (`body_key_id`), and reads follow the row rather than
+the current configuration. That has three consequences:
+
+- **Enabling encryption on a live store is safe.** Bodies already stored stay in the clear, and
+  still read, until something rewrites them. Run `--reencrypt` (below) to seal them all.
+- **Disabling it is safe too.** With `enabled` false, a configured `key` is still used to open the
+  rows it sealed, and new bodies are stored in the clear.
+- **Rotation is a configuration change.** Put the old key in `storage.encryption.retiredKeys` and a
+  new one in `storage.encryption.key`. New writes take the new key, and rows under the old one go on
+  reading. `retiredKeys` takes any number of keys, comma-separated, and is a single string so that
+  it can arrive as one environment variable (`HIPPOCAMPUS_STORAGE_ENCRYPTION_RETIREDKEYS`).
+
+A key is identified by an id derived from the key itself, so there is no id to configure and none to
+get wrong. A row whose key is not configured fails to read with an error naming that id, and a
+queued callback sealed under it stays queued until the key is restored.
+
+`--reencrypt` rewrites every body and queued callback that is not sealed under the active key, then
+exits. Run it after enabling encryption on a store that already holds data, and after a rotation,
+before removing the retired key. It is safe to rerun. On SQLite it writes to the store and so needs
+the service stopped. On PostgreSQL and MySQL it may run beside live instances: a row written while
+it runs is left as that write left it. Even after it runs, a body's old plaintext can survive in
+free pages, WAL segments and dead tuples until the database reclaims them. SQLite's `VACUUM` and
+PostgreSQL's `VACUUM FULL` reclaim them at once.
+
 #### Index rebuilds
 
 `storage.indexRebuild.enabled` (**default false**) has the consolidator rebuild a PostgreSQL index
@@ -1725,7 +1796,9 @@ makes the same target hold fewer memories. Either way it is disk to size for.
 
 - `search.contentIndex.enabled` — whether this store keeps a content index of its own. **Derived
   when unset**: on with `opensearch.enabled` false, off with it true. Set it to override the
-  derivation in either direction; a startup line reports the choice and its reason.
+  derivation in either direction; a startup line reports the choice and its reason. With
+  [`storage.encryption.enabled`](#encryption-at-rest) it is always off, and `true` is refused: the
+  index is a plaintext copy of the bodies encryption seals.
 
 The default is derived because the two backends are alternatives and only one is selected. With
 OpenSearch configured, the store's own index is written on every memory — inside the storage

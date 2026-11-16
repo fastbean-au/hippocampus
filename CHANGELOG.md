@@ -73,6 +73,13 @@ itself which service version it was built against.
 
 ### Security
 
+- **Memory bodies can be encrypted at rest.** `storage.encryption.enabled` with a 32-byte
+  `storage.encryption.key` seals bodies, queued callback payloads and export archives with
+  AES-256-GCM, so a copied store, dump or archive is unreadable without the key. Metadata, groups
+  and event names stay plaintext. The store's own content index is dropped, so keyword search needs
+  OpenSearch. `storage.encryption.retiredKeys` rotates keys, and the new `--reencrypt` mode seals
+  rows written before. Off by default. Schema version 18: an older build refuses an upgraded store.
+  See [Encryption at rest](docs/configuration.md#encryption-at-rest).
 - **Streaming RPCs now run the interceptor chain.** It was unary-only, which reflection was the only
   stream to rely on. `Watch` is authenticated, authorised and rate limited like any other RPC, and
   reflection is unchanged.

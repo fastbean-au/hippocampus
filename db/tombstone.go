@@ -333,7 +333,7 @@ func (d *DB) captureMemoryRows(
 	// might.
 	bodyColumns := ""
 	if withBodies {
-		bodyColumns = `, m.body, m.is_compressed`
+		bodyColumns = `, m.body, m.is_compressed, m.body_key_id`
 	}
 
 	// The significance registry is joined rather than snapshotted in Go: the rank is what a reader
@@ -363,6 +363,7 @@ func (d *DB) captureMemoryRows(
 			row          tombstoneRow
 			stored       []byte
 			isCompressed bool
+			keyId        string
 		)
 
 		targets := []any{
@@ -377,7 +378,7 @@ func (d *DB) captureMemoryRows(
 		}
 
 		if withBodies {
-			targets = append(targets, &stored, &isCompressed)
+			targets = append(targets, &stored, &isCompressed, &keyId)
 		}
 
 		if err := rows.Scan(targets...); err != nil {
@@ -387,7 +388,7 @@ func (d *DB) captureMemoryRows(
 		}
 
 		if withBodies {
-			row.body, row.bodyOmitted = d.capturedBody(row.id, stored, isCompressed)
+			row.body, row.bodyOmitted = d.capturedBody(row.id, encodedBody{bytes: stored, compressed: isCompressed, keyId: keyId})
 		}
 
 		row.value = values[row.id]
@@ -403,17 +404,17 @@ func (d *DB) captureMemoryRows(
 	return captured, nil
 }
 
-// capturedBody decompresses a captured body and applies the size cap, returning the body to carry
-// and whether it was left out.
+// capturedBody opens and decompresses a captured body and applies the size cap, returning the body
+// to carry and whether it was left out.
 //
 // A body over the cap is OMITTED, never truncated. A receiver cannot tell a truncated body from a
 // whole one, so truncation would hand it something that looks complete and is not - which is worse
 // than telling it plainly that there was a body and it did not fit. A body that fails to decompress
 // is treated the same way: the row is still worth reporting, and the flag says what is missing.
-func (d *DB) capturedBody(id string, stored []byte, isCompressed bool) (string, bool) {
-	body, err := decompressBody(stored, isCompressed)
+func (d *DB) capturedBody(id string, stored encodedBody) (string, bool) {
+	body, err := d.decodeBody(id, stored.bytes, stored.compressed, stored.keyId)
 	if err != nil {
-		log.Warnf("failed to decompress the body of %s for a callback, omitting it: %s", id, err.Error())
+		log.Warnf("failed to decode the body of %s for a callback, omitting it: %s", id, err.Error())
 
 		return "", true
 	}

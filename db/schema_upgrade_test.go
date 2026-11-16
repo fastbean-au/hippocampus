@@ -444,6 +444,7 @@ var schemaFixtureTags = map[string]string{
 	"events.metadata":                "v0.25.0",
 	"memories.external_bytes":        "v0.38.3",
 	"memories.indexed_bytes":         "v0.38.3",
+	"memories.body_key_id":           "v0.38.3",
 
 	"link_tables":               "v0.25.0",
 	"drop_legacy_relationships": "v0.25.0",
@@ -465,6 +466,11 @@ var schemaFixtureTags = map[string]string{
 	// and the seeded row's significance is resolved through that registry, which is what proves the
 	// ALTER did not disturb it.
 	"significance_level_unused": "v0.38.3",
+
+	// callback_queue.payload_key_id. Every released fixture predates the QUEUE, so none of them
+	// carries a table for this to alter - as with callback_payload_bytes - and the column is
+	// exercised by TestBodyEncryptionMigratesAPreMigrationQueue instead.
+	"body_encryption": notReleasedBefore,
 
 	// The server dialects' content index. Every released server schema predates it, so the newest
 	// fixture is the one that exercises it - and it exercises the part that matters, which is not

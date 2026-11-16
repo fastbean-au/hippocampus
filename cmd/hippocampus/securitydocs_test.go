@@ -26,6 +26,8 @@ var deniedFeatures = []struct {
 	{"docs/security.md", "There is no server-side mutual TLS", "tls.clientCaFile"},
 	{"docs/security.md", "It registers no gRPC reflection service", "reflection.enabled"},
 	{"SECURITY.md", "verify client certificates on its listeners", "tls.clientCaFile"},
+	{"docs/security.md", "It does not encrypt data at rest", "storage.encryption.enabled"},
+	{"docs/security.md", "since the service provides none", "storage.encryption.enabled"},
 }
 
 var whitespace = regexp.MustCompile(`\s+`)
@@ -58,7 +60,7 @@ func TestSecurityDocsDoNotDenyShippedFeatures(t *testing.T) {
 // credential. It is a heuristic over names, deliberately broad: a key it catches that is not really
 // secret costs one table row, while a secret it misses is one an operator is never told to keep out
 // of a committed config file.
-var secretKeyPattern = regexp.MustCompile(`viper\.Get[A-Za-z]*\("([A-Za-z0-9.]*(?:[Ss]ecret|[Pp]assword|[Tt]oken|[Aa]piKey|[Dd]sn)[A-Za-z0-9.]*)"\)`)
+var secretKeyPattern = regexp.MustCompile(`viper\.Get[A-Za-z]*\("([A-Za-z0-9.]*(?:[Ss]ecret|[Pp]assword|[Tt]oken|[Aa]piKey|[Dd]sn|ncryption\.[A-Za-z]*[Kk]ey)[A-Za-z0-9.]*)"\)`)
 
 // TestEverySecretIsInTheSecretsTable holds docs/security.md's secrets table to the code. The table
 // is the page's answer to "what must I inject rather than commit", and it had fallen four keys

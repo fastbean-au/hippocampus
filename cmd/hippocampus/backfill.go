@@ -31,6 +31,10 @@ type backfillConfig struct {
 	// literal.
 	NoContentIndex bool
 
+	// Encryption is the storage.encryption.* block. Both rebuilds read bodies, and a sealed body
+	// opens only under the ring that holds its key.
+	Encryption encryptionConfig
+
 	// Embed, when enabled, produces the vectors that make the rebuilt index searchable by meaning.
 	// A backfill that omitted them would produce a keyword-only index - silently, since a document
 	// without a vector is a perfectly valid document.
@@ -87,6 +91,8 @@ func rebuildContentSearch(cfg backfillConfig) {
 	if err != nil {
 		log.Fatalf("failed to open database: %s", err.Error())
 	}
+
+	setBackfillKeyring(database, cfg.Encryption)
 
 	if !database.ContentSearchAvailable() {
 		_ = database.Close()
@@ -151,6 +157,8 @@ func backfillSearch(cfg backfillConfig) {
 	if err != nil {
 		log.Fatalf("failed to open database: %s", err.Error())
 	}
+
+	setBackfillKeyring(database, cfg.Encryption)
 
 	idx, err := search.NewOpenSearch(cfg.Search)
 	if err != nil {
@@ -229,4 +237,17 @@ func backfillSearch(cfg backfillConfig) {
 	}
 
 	_ = database.Close()
+}
+
+// setBackfillKeyring gives a rebuild's store the ring its bodies were sealed with. A configuration
+// the ring cannot be built from ends the mode, as the service would refuse to start on it.
+func setBackfillKeyring(database *db.DB, cfg encryptionConfig) {
+	ring, err := keyringFromConfig(cfg)
+	if err != nil {
+		_ = database.Close()
+
+		log.Fatalf("invalid storage.encryption configuration: %s", err.Error())
+	}
+
+	database.SetKeyring(ring)
 }

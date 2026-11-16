@@ -308,18 +308,20 @@ Any config key can be supplied as an environment variable (`HIPPOCAMPUS_<KEY>` w
 underscores), and **that is the recommended way to supply secrets** — inject them as Docker or
 Kubernetes secrets rather than committing them to `config.json`. The ones that matter:
 
-| Secret                               | Env override                           |
-| :----------------------------------- | :------------------------------------- |
-| HMAC signing secret                  | `HIPPOCAMPUS_AUTH_SIGNINGSECRET`       |
-| PostgreSQL DSN (with its password)   | `HIPPOCAMPUS_STORAGE_POSTGRES_DSN`     |
-| MySQL DSN (with its password)        | `HIPPOCAMPUS_STORAGE_MYSQL_DSN`        |
-| OpenSearch password                  | `HIPPOCAMPUS_OPENSEARCH_PASSWORD`      |
-| Transfer token                       | `HIPPOCAMPUS_TRANSFER_TOKEN`           |
-| OAuth2 client secret                 | `HIPPOCAMPUS_AUTH_OAUTH2_CLIENTSECRET` |
-| Summariser model API key             | `HIPPOCAMPUS_LLM_APIKEY`               |
-| Embedding model API key              | `HIPPOCAMPUS_LLM_EMBEDDING_APIKEY`     |
-| Callback bearer token                | `HIPPOCAMPUS_CALLBACKS_TOKEN`          |
-| Callback signing secret              | `HIPPOCAMPUS_CALLBACKS_SIGNINGSECRET`  |
+| Secret                             | Env override                                 |
+| :--------------------------------- | :------------------------------------------- |
+| HMAC signing secret                | `HIPPOCAMPUS_AUTH_SIGNINGSECRET`             |
+| PostgreSQL DSN (with its password) | `HIPPOCAMPUS_STORAGE_POSTGRES_DSN`           |
+| MySQL DSN (with its password)      | `HIPPOCAMPUS_STORAGE_MYSQL_DSN`              |
+| OpenSearch password                | `HIPPOCAMPUS_OPENSEARCH_PASSWORD`            |
+| Transfer token                     | `HIPPOCAMPUS_TRANSFER_TOKEN`                 |
+| OAuth2 client secret               | `HIPPOCAMPUS_AUTH_OAUTH2_CLIENTSECRET`       |
+| Summariser model API key           | `HIPPOCAMPUS_LLM_APIKEY`                     |
+| Embedding model API key            | `HIPPOCAMPUS_LLM_EMBEDDING_APIKEY`           |
+| Callback bearer token              | `HIPPOCAMPUS_CALLBACKS_TOKEN`                |
+| Callback signing secret            | `HIPPOCAMPUS_CALLBACKS_SIGNINGSECRET`        |
+| Storage encryption key             | `HIPPOCAMPUS_STORAGE_ENCRYPTION_KEY`         |
+| Retired storage encryption keys    | `HIPPOCAMPUS_STORAGE_ENCRYPTION_RETIREDKEYS` |
 
 A test holds this table to the code: every key the service reads whose name says it is a credential
 must have a row here.
@@ -331,9 +333,13 @@ single environment variable, so a deployment rotating keys needs a mounted confi
 
 Stated plainly, because each is a thing an operator might otherwise assume:
 
-- **It does not encrypt data at rest.** Bodies are compressed, not encrypted. Use filesystem or
-  volume encryption, or the database's own encryption, and treat a SQLite file or a `pg_dump` as
-  plaintext.
+- **It encrypts memory bodies at rest only when asked to, and only bodies.** With
+  [`storage.encryption.enabled`](configuration.md#encryption-at-rest) it seals bodies, queued
+  callback payloads and export archives, so a copied store, dump or archive is inert without the
+  key. It never seals what queries read: ids, groups, event names and descriptions, links and
+  metadata stay plaintext, and so does whatever OpenSearch indexes. Without it, bodies are compressed,
+  not encrypted: treat a SQLite file or a `pg_dump` as plaintext. Either way, volume or database
+  encryption is still what protects a stolen disk.
 - **It has no per-record ACLs.** Access is tier plus group scope; there is nothing finer.
 - **It never derives a client's identity from its certificate.** [Mutual TLS](#mutual-tls) is
   supported on both listeners, but a certificate only says which process is connecting: who the
@@ -384,7 +390,9 @@ For anything beyond localhost, in the order they matter:
 7. **Group scoping** (with `auth.requireGroupScope`) if several parties share the store — having read
    [the trust boundary](#group-scoping-and-the-trust-boundary) above.
 8. **Secrets as environment variables**, not in `config.json`.
-9. **Volume or database encryption**, since the service provides none.
+9. **`storage.encryption.enabled`** with its key injected as an environment variable, so a leaked
+   dump or archive is inert, plus volume or database encryption for the disk itself and for what
+   the service leaves in the clear (see [What the service does not do](#what-the-service-does-not-do)).
 10. **`/ui` behind your ingress' access controls**, or not exposed at all.
 11. **Mutual TLS** (`tls.clientCaFile`, `tls.requireClientCert`) where every caller is a process you
     deploy — see [Mutual TLS](#mutual-tls).

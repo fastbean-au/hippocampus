@@ -190,6 +190,7 @@ type Deployment struct {
 	StorageDSN       string
 	StorageDirectory string
 	Compression      bool
+	Encryption       bool
 
 	OpenSearchAddresses []string
 	OpenSearchIndex     string

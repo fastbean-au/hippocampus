@@ -644,9 +644,9 @@ func TestRecallMemoriesMySQL(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "timestamp", "significance", "event_id", "body",
 			"is_binary", "time_recalled", "recall_count", "is_summary", "group_name", "is_compressed",
-			"external_bytes", "metadata", "link_significance",
+			"body_key_id", "external_bytes", "metadata", "link_significance",
 		}).AddRow(
-			"m1", int64(10), int32(5), "e1", []byte("hi"), false, int64(99), int32(1), false, "", false,
+			"m1", int64(10), int32(5), "e1", []byte("hi"), false, int64(99), int32(1), false, "", false, "",
 			int64(0), nil, int64(0),
 		))
 	mock.ExpectCommit()
@@ -957,6 +957,11 @@ func expectFreshMigration(t *testing.T, mock sqlmock.Sqlmock, d driver, name str
 		// One addColumnIfMissing, which on a fresh store's registry has nothing to add - the CREATE
 		// TABLE carries the column. It goes through expectColumnPresent rather than a bare probe
 		// because addColumnIfMissing asks a dialect offering ADD COLUMN IF NOT EXISTS directly.
+		expectColumnPresent(mock, d)
+
+	case "body_encryption":
+		// One addColumnIfMissing against the queue, whose CREATE TABLE on a fresh store already
+		// carries the column, for the reason significance_level_unused gives.
 		expectColumnPresent(mock, d)
 
 	default:

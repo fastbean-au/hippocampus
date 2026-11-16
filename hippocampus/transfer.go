@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/fastbean-au/hippocampus/archive"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
+	"github.com/fastbean-au/hippocampus/seal"
 	"github.com/fastbean-au/hippocampus/types"
 )
 
@@ -323,7 +325,19 @@ func (s *Server) exportArchive(ctx context.Context, key string, scheduled bool, 
 	results := make(chan exportResult, 1)
 
 	go func() {
-		w := archive.NewWriter(pw)
+		// The archive is sealed as a stream beneath its own compression, so what reaches the object
+		// store is ciphertext throughout. A ring with no active key passes the archive through as it
+		// always was.
+		sealed, err := s.keyring.NewWriter(pw)
+		if err != nil {
+			_ = pw.CloseWithError(err)
+
+			results <- exportResult{err: err}
+
+			return
+		}
+
+		w := archive.NewWriter(sealed)
 
 		writeArchive := func() (*transferManifest, int, int, error) {
 			if err := w.WriteHeader(header); err != nil {
@@ -357,6 +371,12 @@ func (s *Server) exportArchive(ctx context.Context, key string, scheduled bool, 
 		manifest, events, memories, err := writeArchive()
 		if err == nil {
 			err = w.Close()
+		}
+
+		// After the archive's own Close, which flushes the last of its compression into the sealed
+		// stream: closing the stream first would seal a final segment the archive then writes past.
+		if err == nil {
+			err = sealed.Close()
 		}
 
 		// CloseWithError propagates a writer-side failure to the uploader's read; a nil error
@@ -492,7 +512,22 @@ func (s *Server) Import(ctx context.Context, in *contract.ImportRequest) (*contr
 func (s *Server) importArchive(ctx context.Context, body io.Reader) (int, int, error) {
 	log.Trace("func() importArchive")
 
-	r, err := archive.NewReader(body)
+	// A sealed archive is opened with the key its header names; an unsealed one - written before
+	// encryption was enabled, or by an instance without it - reads as it always did.
+	plain, err := s.keyring.NewReader(body)
+	if err != nil {
+		if errors.Is(err, seal.ErrUnknownKey) {
+			return 0, 0, status.Errorf(
+				codes.FailedPrecondition,
+				"the archive is sealed under a key this instance does not hold (%s); add it to storage.encryption.retiredKeys",
+				err.Error(),
+			)
+		}
+
+		return 0, 0, err
+	}
+
+	r, err := archive.NewReader(plain)
 	if err != nil {
 		return 0, 0, err
 	}

@@ -960,6 +960,7 @@ func (d *DB) coreSchemaStatements() []string {
 			is_summary            ` + boolean + `,
 			group_name            ` + label + `,
 			is_compressed         ` + boolean + `,
+			body_key_id           ` + label + `,
 			link_significance     ` + bigint + `,
 			external_bytes        ` + bigint + `,
 			indexed_bytes         ` + dialect.bigintType + `,
@@ -1015,6 +1016,12 @@ func (d *DB) coreColumnMigrations() []coreColumn {
 		// Bodies written before compression existed are all uncompressed, which is what the
 		// column's default already says of them, so adding it is the whole migration.
 		{"memories", "is_compressed", boolean, "body compression"},
+
+		// Bodies written before encryption existed are all in the clear, which is what the
+		// column's empty default already says of them. It is a core column rather than part of
+		// migration 18 because the content-search migrations read bodies to populate themselves,
+		// and every body read now reads this column too.
+		{"memories", "body_key_id", label, "body encryption"},
 
 		// Named group_name rather than group because GROUP is a reserved word in every dialect the
 		// service speaks. It takes the id type so it stays indexable and compares byte-for-byte,

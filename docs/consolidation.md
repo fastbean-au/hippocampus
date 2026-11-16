@@ -447,9 +447,9 @@ flowchart LR
   subgraph memories["One memories row"]
     direction TB
     inputs["Decay inputs — the covering index<br/>event_id · timestamp · significance_level_id<br/>time_recalled · recall_count · link_significance<br/>external_bytes"]
-    flags["Flags and labels<br/>group_name · is_binary · is_summary · is_compressed"]
+    flags["Flags and labels<br/>group_name · is_binary · is_summary · is_compressed · body_key_id"]
     accounting["Accounting<br/>indexed_bytes"]
-    payload["Payload<br/>body (gzipped) · metadata"]
+    payload["Payload<br/>body (gzipped, optionally sealed) · metadata"]
   end
 
   C["Consolidation passes<br/>every row, every cycle"] --> inputs
@@ -475,6 +475,7 @@ flowchart LR
 | `is_binary`             | flag        | no             |
 | `is_summary`            | flag        | no             |
 | `is_compressed`         | flag        | no             |
+| `body_key_id`           | flag        | no             |
 | `indexed_bytes`         | accounting  | no             |
 | `body`                  | payload     | no             |
 | `metadata`              | payload     | no             |

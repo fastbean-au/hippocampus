@@ -24,13 +24,13 @@ const deleteChunkSize = 500
 // metadata sits ahead of link_significance so this list and memoryReturningColumns (which appends
 // link_significance to memoryStoredColumns) share one tail order, and scanMemory/scanMemoryStored
 // therefore read their last three columns identically.
-const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, external_bytes, metadata, link_significance`
+const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, body_key_id, external_bytes, metadata, link_significance`
 
 // memoryStoredColumns is the physical column list of the memories table (significance_level_id, not
 // the removed significance): used for INSERT. link_significance is deliberately absent - it is
 // maintained by the link graph rather than supplied by a write, so it must not appear in an insert's
 // column list.
-const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, external_bytes, indexed_bytes, metadata`
+const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, body_key_id, external_bytes, indexed_bytes, metadata`
 
 // memoryReturningColumns is memoryStoredColumns plus the link aggregate, for UPDATE ... RETURNING,
 // which reads rather than writes and so wants every column a caller sees. scanMemoryStored reads it.
@@ -45,7 +45,7 @@ var memoryValuePlaceholders = `(` + placeholders(strings.Count(memoryStoredColum
 // (id, event_id, significance, ...) need no change. An unranked (NULL) level reads as significance 0.
 const memoriesFrom = `(SELECT m.id, m.timestamp, COALESCE(l.level_rank, 0) AS significance, m.event_id,
 	m.body, m.is_binary, m.time_recalled, m.recall_count, m.is_summary, m.group_name, m.is_compressed,
-	m.external_bytes, m.link_significance, m.metadata
+	m.body_key_id, m.external_bytes, m.link_significance, m.metadata
 	FROM memories m LEFT JOIN significance_levels l ON l.id = m.significance_level_id) AS memories`
 
 // placeholders returns a comma-separated list of n SQL parameter placeholders.
@@ -80,10 +80,11 @@ func escapeLikePattern(in string) string {
 	return out.String()
 }
 
-func scanMemory(rows *sql.Rows) (types.Memory, error) {
+func (d *DB) scanMemory(rows *sql.Rows) (types.Memory, error) {
 	var m types.Memory
 	var body []byte
 	var isCompressed bool
+	var keyId string
 	var metadata any
 
 	if err := rows.Scan(
@@ -98,6 +99,7 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 		&m.IsSummary,
 		&m.Group,
 		&isCompressed,
+		&keyId,
 		&m.ExternalBytes,
 		&metadata,
 		&m.LinkSignificance,
@@ -117,12 +119,12 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 
 	m.Metadata = decodedMetadata
 
-	// Decompression is driven by the row's own flag, so a store holding a mix of compressed and
-	// uncompressed rows - which any store whose compression setting has ever changed will - reads
-	// back uniformly.
-	decompressed, err := decompressBody(body, isCompressed)
+	// Opening and decompression are driven by the row's own key id and flag, so a store holding a
+	// mix of sealed and plain, compressed and uncompressed rows - which any store whose settings
+	// have ever changed will - reads back uniformly.
+	decompressed, err := d.decodeBody(m.Id, body, isCompressed, keyId)
 	if err != nil {
-		log.Errorf("failed to decompress body of memory '%s': %s", m.Id, err.Error())
+		log.Errorf("failed to decode body of memory '%s': %s", m.Id, err.Error())
 
 		return m, err
 	}
@@ -135,11 +137,12 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 // scanMemoryStored reads memoryReturningColumns, carrying the raw significance_level_id into
 // SignificanceLevelID. Significance (the rank) is left 0 for the caller to fill from a registry
 // snapshot (fillRanks) - used where a join is unavailable, e.g. RETURNING.
-func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
+func (d *DB) scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 	var m types.Memory
 	var body []byte
 	var levelID sql.NullInt64
 	var isCompressed bool
+	var keyId string
 	var metadata any
 
 	// indexed_bytes is read into a discard: it is in memoryStoredColumns because every insert writes
@@ -160,6 +163,7 @@ func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 		&m.IsSummary,
 		&m.Group,
 		&isCompressed,
+		&keyId,
 		&m.ExternalBytes,
 		&indexedBytes,
 		&metadata,
@@ -177,9 +181,9 @@ func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 
 	m.Metadata = decodedMetadata
 
-	decompressed, err := decompressBody(body, isCompressed)
+	decompressed, err := d.decodeBody(m.Id, body, isCompressed, keyId)
 	if err != nil {
-		log.Errorf("failed to decompress body of memory '%s': %s", m.Id, err.Error())
+		log.Errorf("failed to decode body of memory '%s': %s", m.Id, err.Error())
 
 		return m, err
 	}
@@ -237,7 +241,10 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 
 	memory.SignificanceLevelID = levelID
 
-	body, isCompressed := d.compressBody(memory.Body, memory.IsBinary)
+	stored, err := d.encodeBody(memory.Id, memory.Body, memory.IsBinary)
+	if err != nil {
+		return "", err
+	}
 
 	metadata, err := types.MarshalMetadata(memory.Metadata)
 	if err != nil {
@@ -255,13 +262,14 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 		memory.TimeStamp,
 		levelIDArg(memory.SignificanceLevelID),
 		memory.EventId,
-		body,
+		stored.bytes,
 		memory.IsBinary,
 		memory.TimeRecalled,
 		memory.RecallCount,
 		memory.IsSummary,
 		memory.Group,
-		isCompressed,
+		stored.compressed,
+		stored.keyId,
 		memory.ExternalBytes,
 		indexedBodyBytes(memory.Body, memory.IsBinary),
 		metadata,
@@ -333,8 +341,8 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 		args = append(args, memory.EventId)
 	}
 
-	// A new body carries a new compression decision, so is_compressed is always written alongside
-	// body - never left to describe the body it replaced. The decision needs to know whether the
+	// A new body carries a new compression and sealing decision, so is_compressed and body_key_id
+	// are always written alongside body - never left to describe the body it replaced. The decision needs to know whether the
 	// memory is binary, and is_binary is outside this partial-update surface (the caller's copy of
 	// it is not authoritative), so it is read from the stored row.
 	// bodyChanged also drives the content-search reindex below, which needs the same is_binary the
@@ -350,10 +358,13 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 			return false, err
 		}
 
-		body, isCompressed := d.compressBody(memory.Body, isBinary)
+		stored, err := d.encodeBody(memory.Id, memory.Body, isBinary)
+		if err != nil {
+			return false, err
+		}
 
-		sets = append(sets, `body = ?`, `is_compressed = ?`, `indexed_bytes = ?`)
-		args = append(args, body, isCompressed, indexedBodyBytes(memory.Body, isBinary))
+		sets = append(sets, `body = ?`, `is_compressed = ?`, `body_key_id = ?`, `indexed_bytes = ?`)
+		args = append(args, stored.bytes, stored.compressed, stored.keyId, indexedBodyBytes(memory.Body, isBinary))
 
 		bodyChanged = true
 		bodyIsBinary = isBinary
@@ -1110,7 +1121,7 @@ func (d *DB) recallMemoriesReturning(ctx context.Context, ids []string, now int6
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		m, err := scanMemoryStored(rows)
+		m, err := d.scanMemoryStored(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1198,7 +1209,7 @@ func (d *DB) recallMemoriesWithoutReturning(ctx context.Context, ids []string, n
 	}
 
 	for rows.Next() {
-		m, err := scanMemory(rows)
+		m, err := d.scanMemory(rows)
 		if err != nil {
 			_ = rows.Close()
 			_ = tx.Rollback()
@@ -1258,7 +1269,7 @@ func (d *DB) GetMemoriesByIds(ctx context.Context, ids []string) (*[]types.Memor
 		}
 
 		for rows.Next() {
-			m, err := scanMemory(rows)
+			m, err := d.scanMemory(rows)
 			if err != nil {
 				_ = rows.Close()
 
@@ -1306,7 +1317,7 @@ func (d *DB) GetIndexableMemoriesPage(ctx context.Context, afterId string, limit
 	var memories []types.Memory
 
 	for rows.Next() {
-		m, err := scanMemory(rows)
+		m, err := d.scanMemory(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1349,7 +1360,7 @@ func (d *DB) GetMemoriesByEventIds(ctx context.Context, eventIds []string) (*[]t
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		m, err := scanMemory(rows)
+		m, err := d.scanMemory(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1436,7 +1447,7 @@ func (d *DB) GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types
 	var memories []types.Memory
 
 	for rows.Next() {
-		m, err := scanMemory(rows)
+		m, err := d.scanMemory(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1557,7 +1568,12 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 		return 0, err
 	}
 
-	body, isCompressed := d.compressBody(summary.Body, summary.IsBinary)
+	stored, err := d.encodeBody(summary.Id, summary.Body, summary.IsBinary)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
 
 	metadata, err := types.MarshalMetadata(summary.Metadata)
 	if err != nil {
@@ -1574,13 +1590,14 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 		summary.TimeStamp,
 		levelIDArg(summary.SignificanceLevelID),
 		summary.EventId,
-		body,
+		stored.bytes,
 		summary.IsBinary,
 		summary.TimeRecalled,
 		summary.RecallCount,
 		summary.IsSummary,
 		summary.Group,
-		isCompressed,
+		stored.compressed,
+		stored.keyId,
 		summary.ExternalBytes,
 		indexedBodyBytes(summary.Body, summary.IsBinary),
 		metadata,
@@ -1907,7 +1924,7 @@ func (d *DB) GetMemories(ctx context.Context, filter MemoryFilter) (*[]types.Mem
 	var memories []types.Memory
 
 	for rows.Next() {
-		m, err := scanMemory(rows)
+		m, err := d.scanMemory(rows)
 		if err != nil {
 			return nil, err
 		}

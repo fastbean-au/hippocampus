@@ -24,6 +24,7 @@ import (
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/embed"
 	"github.com/fastbean-au/hippocampus/notify"
+	"github.com/fastbean-au/hippocampus/seal"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/summarise"
 )
@@ -222,6 +223,9 @@ type Server struct {
 	// cycle's auto-summarisation; nil (as in tests constructing a Server directly) behaves as the
 	// disabled no-op via summariser().
 	summarise summarise.Summariser
+
+	// keyring seals export archives and opens sealed imports; nil writes and reads them unsealed.
+	keyring *seal.Keyring
 
 	// embed is the optional text embedder backing semantic search; nil (as in tests constructing a
 	// Server directly) behaves as the disabled no-op via embedder().
@@ -574,6 +578,11 @@ type Dependencies struct {
 	// queue's recording as well as its dispatch, so a store never queues what nothing will send.
 	Notifier notify.Notifier
 
+	// Keyring seals the export archives this instance writes and opens the sealed ones it imports
+	// (nil -> archives are written in the clear, and only unsealed ones import). It is the ring the
+	// store seals bodies with: an archive is the store's contents, so it is protected the same way.
+	Keyring *seal.Keyring
+
 	// Version is the build identification main.go already derived (runtime/debug.ReadBuildInfo),
 	// passed in rather than re-read here because the -ldflags override that makes a release report
 	// its tag lives in package main and nowhere else. Reported by GetTopology on the self node;
@@ -596,6 +605,7 @@ func New(deps Dependencies, cfg Config) *Server {
 		summarise: deps.Summariser,
 		embed:     deps.Embedder,
 		objects:   deps.Objects,
+		keyring:   deps.Keyring,
 		manifests: make(map[string]*transferManifest),
 		transfer: Transfer{
 			targetAddress:         cfg.Transfer.TargetAddress,

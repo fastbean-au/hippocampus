@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	log "github.com/sirupsen/logrus"
+
+	"github.com/fastbean-au/hippocampus/seal"
 )
 
 // callbackQueueTable is the persisted callback queue: one row per delivery still waiting to be
@@ -345,6 +348,7 @@ func (d *DB) callbackQueueDDL() string {
 		payload         ` + dialect.blobType + `,
 		payload_bytes   ` + dialect.bigintType + ` NOT NULL DEFAULT 0,
 		is_compressed   ` + dialect.boolType + ` NOT NULL DEFAULT ` + dialect.boolFalse + `,
+		payload_key_id  ` + dialect.idType + ` NOT NULL DEFAULT '',
 		queued_at       ` + dialect.bigintType + ` NOT NULL DEFAULT 0,
 		attempts        INTEGER NOT NULL DEFAULT 0,
 		next_attempt_at ` + dialect.bigintType + ` NOT NULL DEFAULT 0
@@ -453,13 +457,13 @@ func (d *DB) queueCallbacks(tx *sql.Tx, deliveries []CallbackDelivery) error {
 
 		query := `INSERT INTO ` + callbackQueueTable + ` (
 			kind, cause, cycle_id, chunk, chunks, item_count, payload, payload_bytes,
-			is_compressed, queued_at, next_attempt_at
+			is_compressed, payload_key_id, queued_at, next_attempt_at
 		) VALUES `
 
-		args := make([]any, 0, len(chunk)*11)
+		args := make([]any, 0, len(chunk)*12)
 
 		for i, delivery := range chunk {
-			encoded, compressed, err := encodeCallbackPayload(delivery.Payload)
+			encoded, compressed, keyId, err := d.sealCallbackPayload(delivery.Payload)
 			if err != nil {
 
 				return err
@@ -469,7 +473,7 @@ func (d *DB) queueCallbacks(tx *sql.Tx, deliveries []CallbackDelivery) error {
 				query += ", "
 			}
 
-			query += "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+			query += "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 			queuedAt := delivery.QueuedAt
 			if queuedAt == 0 {
@@ -488,6 +492,7 @@ func (d *DB) queueCallbacks(tx *sql.Tx, deliveries []CallbackDelivery) error {
 				// out of the payload column later is the scan this column exists to avoid.
 				int64(len(encoded)),
 				compressed,
+				keyId,
 				queuedAt,
 				// Due immediately: a fresh delivery has no backoff to serve.
 				queuedAt,
@@ -620,7 +625,7 @@ func (d *DB) ClaimCallbacks(ctx context.Context, limit int, now int64) ([]Callba
 	rows, err := d.query(
 		ctx,
 		`SELECT seq, kind, cause, cycle_id, chunk, chunks, item_count, payload, is_compressed,
-			queued_at, attempts, next_attempt_at
+			payload_key_id, queued_at, attempts, next_attempt_at
 		FROM `+callbackQueueTable+`
 		WHERE next_attempt_at <= ?
 		ORDER BY seq LIMIT ?`,
@@ -637,6 +642,7 @@ func (d *DB) ClaimCallbacks(ctx context.Context, limit int, now int64) ([]Callba
 
 	var out []CallbackDelivery
 
+CLAIM_LOOP:
 	for rows.Next() {
 		var (
 			v            CallbackDelivery
@@ -644,6 +650,7 @@ func (d *DB) ClaimCallbacks(ctx context.Context, limit int, now int64) ([]Callba
 			cause        int
 			stored       []byte
 			isCompressed bool
+			keyId        string
 		)
 
 		if err := rows.Scan(
@@ -656,6 +663,7 @@ func (d *DB) ClaimCallbacks(ctx context.Context, limit int, now int64) ([]Callba
 			&v.ItemCount,
 			&stored,
 			&isCompressed,
+			&keyId,
 			&v.QueuedAt,
 			&v.Attempts,
 			&v.NextAttemptAt,
@@ -673,11 +681,26 @@ func (d *DB) ClaimCallbacks(ctx context.Context, limit int, now int64) ([]Callba
 		// pass, and the caps that would eventually remove it exempt memory_forgotten rows under a
 		// retaining backlog policy. So it is handed back flagged, for the dispatcher to remove and
 		// count as abandoned. The columns read above still say what was lost.
-		payload, err := decodeCallbackPayload(stored, isCompressed)
-		if err != nil {
+		//
+		// The one exception is a payload sealed under a key the ring does not hold. That payload is
+		// intact, and the remedy is configuration - restore the key to storage.encryption.retiredKeys
+		// - so abandoning it would destroy a delivery over a mistake that is undone by a restart.
+		// It is left queued, and said so, instead.
+		payload, err := d.openCallbackPayload(stored, isCompressed, keyId)
+
+		switch {
+
+		case errors.Is(err, seal.ErrUnknownKey):
+			log.Warnf("queued callback %d is sealed under key %s, which is not configured; it stays queued until the key is restored", v.Seq, keyId)
+
+			continue CLAIM_LOOP
+
+		case err != nil:
 			v.DecodeErr = err
-		} else {
+
+		default:
 			v.Payload = payload
+
 		}
 
 		out = append(out, v)

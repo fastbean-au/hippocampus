@@ -537,6 +537,38 @@ const STEPS = [
         ],
       },
       {
+        title: "Encryption at rest",
+        fields: [
+          {
+            key: "storage.encryption.enabled",
+            label: "Encrypt memory bodies",
+            type: "bool",
+            def: false,
+            svc: false,
+            help: "Seals memory bodies, queued callback payloads and export archives with AES-256-GCM, so a copied database file, a dump or an archive gives nothing away. Ids, groups, event names, links and metadata stay readable — queries need them. Drops the store's own content index, a plaintext copy of every body, so keyword search needs OpenSearch. Rows record their key, so it is safe to enable or disable on a live store; run --reencrypt to seal rows written before.",
+          },
+          {
+            key: "storage.encryption.key",
+            label: "Encryption key",
+            type: "text",
+            def: "",
+            secret: true,
+            generate: 32,
+            when: (s) => value(s, "storage.encryption.enabled"),
+            help: "32 random bytes, base64. Generate one here, or with `openssl rand -base64 32`, and inject it as HIPPOCAMPUS_STORAGE_ENCRYPTION_KEY rather than writing it into config.json. Lose it and every sealed body is lost with it — keep a copy somewhere the store is not.",
+          },
+          {
+            key: "storage.encryption.retiredKeys",
+            label: "Retired keys",
+            type: "text",
+            def: "",
+            secret: true,
+            when: (s) => value(s, "storage.encryption.enabled"),
+            help: "Earlier keys, comma-separated, that still open rows sealed before a rotation. New writes use the key above. Once --reencrypt has rewritten everything under the new key, a retired key can be removed.",
+          },
+        ],
+      },
+      {
         title: "Index rebuilds",
         fields: [
           {
@@ -1755,7 +1787,7 @@ const STEPS = [
             key: "search.contentIndex.enabled",
             label: "Keep the store's own content index",
             type: "bool",
-            def: (s) => !value(s, "opensearch.enabled"),
+            def: (s) => !value(s, "opensearch.enabled") && !value(s, "storage.encryption.enabled"),
             // Always written out. Absent, this key is DERIVED from opensearch.enabled rather than
             // read as a literal, so there is no single value whose omission means the same thing -
             // and the case a minimal config would get wrong is the deliberate one: an operator
@@ -3088,6 +3120,24 @@ function validate() {
       "warn",
       "extras",
       "Nothing indexes memory content: the store keeps no index of its own and OpenSearch is off, so SearchMemories is rejected with FailedPrecondition on every call. That is a coherent choice for a store nobody searches by content — reading by id, event, group, metadata and time is unaffected — but it is worth having chosen rather than inherited.",
+    );
+  }
+
+  // Mirrors encryptionProblems: the service refuses this pair rather than quietly dropping the
+  // index, so the wizard must not write it.
+  if (on("storage.encryption.enabled") && on("search.contentIndex.enabled")) {
+    add(
+      "error",
+      "extras",
+      "The store's own content index is on with storage encryption: the index is a plaintext copy of every body it holds, so the service refuses to start on this. Turn the index off — keyword search then needs OpenSearch.",
+    );
+  }
+
+  if (on("storage.encryption.enabled") && on("opensearch.enabled")) {
+    add(
+      "warn",
+      "extras",
+      "Storage encryption is on, but OpenSearch indexes every body in the clear. Encrypt the cluster at rest on its own side — the service seals only what it stores itself.",
     );
   }
 

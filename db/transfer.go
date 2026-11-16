@@ -50,7 +50,7 @@ func (d *DB) GetMemoriesPage(ctx context.Context, afterId string, limit int, gro
 	var memories []types.Memory
 
 	for rows.Next() {
-		m, err := scanMemory(rows)
+		m, err := d.scanMemory(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -128,7 +128,7 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 		update: []string{
 			"timestamp", "significance_level_id", "event_id", "body", "is_binary",
 			"time_recalled", "recall_count", "is_summary", "group_name", "is_compressed",
-			"external_bytes", "metadata",
+			"body_key_id", "external_bytes", "metadata",
 		},
 	})
 
@@ -155,8 +155,14 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 		}
 
 		// An import carries plain bodies on the wire (the archive format is storage-agnostic), so
-		// each row takes this instance's compression policy rather than the source instance's.
-		body, isCompressed := d.compressBody(memory.Body, memory.IsBinary)
+		// each row takes this instance's compression and sealing policy rather than the source
+		// instance's.
+		stored, err := d.encodeBody(memory.Id, memory.Body, memory.IsBinary)
+		if err != nil {
+			_ = tx.Rollback()
+
+			return 0, err
+		}
 
 		metadata, err := types.MarshalMetadata(memory.Metadata)
 		if err != nil {
@@ -173,13 +179,14 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			memory.TimeStamp,
 			levelID,
 			memory.EventId,
-			body,
+			stored.bytes,
 			memory.IsBinary,
 			memory.TimeRecalled,
 			memory.RecallCount,
 			memory.IsSummary,
 			memory.Group,
-			isCompressed,
+			stored.compressed,
+			stored.keyId,
 			memory.ExternalBytes,
 			indexedBodyBytes(memory.Body, memory.IsBinary),
 			metadata,

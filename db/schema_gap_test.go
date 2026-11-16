@@ -289,6 +289,16 @@ func TestServerSchemaInitFailuresStopTheRun(t *testing.T) {
 
 			mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
 		},
+		"body_encryption": func(mock sqlmock.Sqlmock, d driver) {
+			// Plain addColumnIfMissing, as significance_level_unused is.
+			if dialects[d].addColumnIfNotExists {
+				mock.ExpectExec(`ALTER TABLE .* ADD COLUMN IF NOT EXISTS`).WillReturnError(errors.New("boom"))
+
+				return
+			}
+
+			mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, dialect := range serverDialects {

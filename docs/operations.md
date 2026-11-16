@@ -1375,6 +1375,27 @@ Three approaches, which combine:
   [Scheduled export](configuration.md#scheduled-export), and alert on
   `HippocampusScheduledExportStale`, since a backup nobody notices failing is worse than none.
 
+With [encryption at rest](configuration.md#encryption-at-rest) on, all three carry sealed bodies:
+`--backup` and the server tools copy rows as stored, and `Export` seals the archive itself. A
+restore, an `Import` or a driver migration therefore needs the key the copy was sealed under, in
+`storage.encryption.key` or `storage.encryption.retiredKeys`. A backup is only as recoverable as the
+key kept beside it, so keep the key on its own rotation, away from the backups.
+
+### Rotating the encryption key
+
+Put the current key in `storage.encryption.retiredKeys`, a new one in `storage.encryption.key`, and
+restart. New writes take the new key, and every row under the old one goes on reading. To retire the
+old key altogether, run `hippocampus --reencrypt -c config.json`. It rewrites every body and queued
+callback that is not under the active key, and logs how many it rewrote. The old key can come out of
+the configuration once a run reports nothing to rewrite. It also needs to stay wherever an older
+backup or archive might be restored from.
+
+`--reencrypt` writes to the store. On SQLite the storage lock means the service must be stopped. On
+PostgreSQL and MySQL it may run beside live instances, which go on serving: a row a live instance
+writes during the run is left as that write left it. The same run seals the plaintext rows of a
+store that held data before encryption was enabled. Plaintext from before the run can still be in
+free pages and WAL until the database reclaims them (`VACUUM`, or `VACUUM FULL` on PostgreSQL).
+
 What none of these reaches is an archive or backup already written: erasing a group, or a person's
 records, removes them from the store and leaves them in every backup taken before. Keeping backups
 on a bounded rotation is what bounds how long erased data survives in them.
@@ -2028,8 +2049,8 @@ Authentication, TLS and rate limiting are **off by default**, and nothing here t
 any deployment reachable beyond localhost needs a deliberate pass over
 **[the security guide](security.md)**. It covers authentication and key rotation, the role tiers,
 group scoping, transport and gateway hardening, the console's boundary, where memory content can
-leave the process, what the service does not do (no encryption at rest), and a hardening checklist
-to work down.
+leave the process, what the service does not do (encryption at rest covers bodies only, and only
+when enabled), and a hardening checklist to work down.
 
 Two operational notes belong here rather than there:
 

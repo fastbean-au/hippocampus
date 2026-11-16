@@ -135,6 +135,40 @@ and byte-for-byte everywhere else). Metadata bytes are counted at **four** sites
 or eviction chases a figure it cannot reach: `EvictMemories`, `usedBytesLiveRows`,
 `PreviewConsolidation`, and `RetainedStats`.
 
+**Encryption at rest** (`encrypt.go`, the `seal` package, `storage.encryption.*`, off by default;
+TODO-3 item 195) sits at the compression boundary and in the same order: compress, then seal on the
+way in; open, then decompress on the way out, so ciphertext, which does not compress, never reaches
+gzip, and nothing above the package sees anything but plain bodies. The decision is recorded per
+row, as compression's is: `memories.body_key_id` (empty = plaintext) names the key, and reads
+follow the row, so enabling, disabling and rotating are all safe on a live store and a mixed store
+reads uniformly. The key id is **derived from the key** (an HMAC of it, 8 hex characters) rather
+than configured beside it, so it cannot be wrong: a ring given different material for a key reports
+the row's key as not configured, which says what is the matter, rather than as an authentication
+failure, which does not. Each value is sealed under its own key, derived by HKDF from the configured
+key and a 16-byte random salt, which removes the AES-GCM random-nonce budget from the question at 33
+bytes a row. That is deliberately not envelope encryption in the KMS sense (a random data key
+wrapped by the configured one): wrapping buys nothing while the key-encryption key lives in the
+process, and its real value, a key-encryption key that never leaves a KMS, is a different
+deployment. A body's additional data is its memory id, so a sealed body moved onto another row by
+someone who can write the table but lacks the key fails to open. The column is a **core column**
+(migration 2), not migration 18's, for a reason that broke the first attempt: migrations 12 and 14
+populate the content index by reading bodies through the scanners, which now select
+`body_key_id`, so on an upgraded store the column has to exist before they run. Migration 18 adds
+`callback_queue.payload_key_id` (queued payloads carry bodies under `callbacks.includeBodies`) and,
+more importantly, bumps the version, because an older build would otherwise read a sealed body as
+the body itself and hand ciphertext to every caller with no error anywhere. A payload sealed under a
+key the ring does not hold stays queued rather than being abandoned like an undecodable one, because
+the remedy is configuration. What is **not** sealed is everything a query reads; metadata was the
+close call, and stays plaintext because every dialect filters on it inside the database. The store's
+own content index is a plaintext copy of every body, so `contentIndexSetting` drops it under
+encryption and `encryptionProblems` refuses an explicit `search.contentIndex.enabled: true` beside
+it. Export archives are sealed as a stream (`seal/stream.go`: 64 KiB GCM segments whose nonce is the
+segment's position plus a final flag, so truncation at a segment boundary is detected) beneath the
+archive's own gzip, and `Import` tells a sealed archive from a gzip one by its first bytes. Rows
+written before encryption, or under a retired key, are moved by `--reencrypt` (`ReencryptBodies`),
+which rewrites a row only if it still holds exactly the bytes it read, so it is safe beside a live
+instance on a server dialect.
+
 ## `db/link.go`
 
 `db/link.go` — the **link graph**: `memory_links` and `event_links`, one directed row per edge

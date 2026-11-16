@@ -187,6 +187,7 @@ func serverConfig(authMethod string) hippocampus.Config {
 			StorageDSN:       dsn,
 			StorageDirectory: viper.GetString("storage.directory"),
 			Compression:      viper.GetBool("storage.compression.enabled"),
+			Encryption:       viper.GetBool("storage.encryption.enabled"),
 
 			OpenSearchAddresses: viper.GetStringSlice("opensearch.addresses"),
 			OpenSearchIndex:     viper.GetString("opensearch.index"),

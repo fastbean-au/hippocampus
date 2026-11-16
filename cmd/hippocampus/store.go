@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/fastbean-au/hippocampus/db"
+	"github.com/fastbean-au/hippocampus/seal"
 )
 
 // warnIfOverCapacity reports a store that is already past its byte capacity target as the service
@@ -66,7 +67,15 @@ func warnIfOverCapacity(database db.Store, capacityBytes int64) {
 // here than it does for reflection. Keeping the index alongside OpenSearch is a real choice - it is
 // what a deployment falls back to when the cluster is unreachable, and what makes turning OpenSearch
 // off again free - and a plain GetBool could only ever express "off".
+//
+// Encryption takes precedence over both, and is not overridable: the index is a plaintext copy of
+// every body it holds, so a store sealing its bodies beside one would protect nothing. An explicit
+// true alongside it is refused by storeProblems rather than honoured here.
 func contentIndexSetting() (bool, string) {
+	if viper.GetBool("storage.encryption.enabled") {
+		return false, "storage.encryption.enabled: the index is a plaintext copy of every body, so it is dropped"
+	}
+
 	if viper.IsSet("search.contentIndex.enabled") {
 		return viper.GetBool("search.contentIndex.enabled"), "set by search.contentIndex.enabled"
 	}
@@ -111,6 +120,15 @@ type storeConfig struct {
 	CompressionEnabled  bool
 	CompressionMinBytes int
 
+	// Encryption is the storage.encryption.* block, from which run builds Keyring with
+	// keyringFromConfig before the store is opened.
+	Encryption encryptionConfig
+	Keyring    *seal.Keyring
+
+	// OpenSearch is opensearch.enabled, read here only to say at startup that the cluster holds a
+	// plaintext copy of what the store seals.
+	OpenSearch bool
+
 	Tombstones db.TombstonePolicy
 
 	// ContentIndex and ContentIndexReason are contentIndexSetting's decision and why it was taken.
@@ -125,6 +143,10 @@ func setStoreDefaults() {
 	viper.SetDefault("storage.queryTimeoutSeconds", 60)
 	viper.SetDefault("storage.compression.enabled", true)
 	viper.SetDefault("storage.compression.minBytes", 512)
+
+	// Off, because before it the service sealed nothing. The two keys take no default, as no
+	// secret does: there is no value the service could default one to that would be secret.
+	viper.SetDefault("storage.encryption.enabled", false)
 
 	// Off, because before it the service rebuilt nothing. The two bounds match
 	// HippocampusIndexBloated's, so with rebuilds on that alert fires only for an index the
@@ -154,6 +176,8 @@ func storeProblems() []error {
 			problems = append(problems, fmt.Errorf("storage.indexRebuild.maxBytesPerEntry must be greater than 0, got %d", perEntry))
 		}
 	}
+
+	problems = append(problems, encryptionProblems()...)
 
 	// An empty storage.directory selects db.New's in-memory mode, which is intended for tests
 	// only - every write is lost on restart. Refuse it for the sqlite driver so it can never be
@@ -188,6 +212,8 @@ func storeConfigFromViper() storeConfig {
 		QueryTimeout:        time.Duration(viper.GetInt("storage.queryTimeoutSeconds")) * time.Second,
 		CompressionEnabled:  viper.GetBool("storage.compression.enabled"),
 		CompressionMinBytes: viper.GetInt("storage.compression.minBytes"),
+		Encryption:          encryptionConfigFromViper(),
+		OpenSearch:          viper.GetBool("opensearch.enabled"),
 		Tombstones: db.TombstonePolicy{
 			Enabled:      viper.GetBool("consolidation.tombstones.enabled"),
 			MaxRows:      viper.GetInt("consolidation.tombstones.maxRows"),
@@ -285,6 +311,12 @@ func initStore(cfg storeConfig) (*db.DB, error) {
 	// writes only: each row records whether it was compressed, so enabling or disabling it on an
 	// existing store leaves every row already written perfectly readable.
 	database.SetCompression(cfg.CompressionEnabled, cfg.CompressionMinBytes)
+
+	// Seal bodies at rest, after compression. Like compression it governs writes only: each row
+	// records the key it was sealed under, so a ring holding the retired keys reads every row
+	// whatever it was written with.
+	database.SetKeyring(cfg.Keyring)
+	logEncryption(cfg.Keyring, cfg.OpenSearch)
 
 	// The forgotten log: a record of what the sleep cycle deleted, and why. Off by default, and
 	// bounded when on - an unbounded log inside the store it describes would consume the headroom

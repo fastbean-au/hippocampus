@@ -562,6 +562,7 @@ func (s *Server) storeNodeSpec(d Deployment) topologyNodeSpec {
 	spec.attributes = []topologyAttribute{
 		{key: "driver", value: driver},
 		{key: "compression", value: enabledDescription(d.Compression)},
+		{key: "encryption", value: enabledDescription(d.Encryption)},
 	}
 
 	// The single-consolidator lock is what makes a shared store safe. This says whether THIS

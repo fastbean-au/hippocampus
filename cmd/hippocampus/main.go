@@ -53,6 +53,7 @@ func execute(args []string) {
 	flags.Bool("backfill-search", false, "rebuild the opensearch content-search index from the primary store and exit")
 	flags.Bool("reindex", false, "delete and recreate the index before backfilling, removing stale entries (used with --backfill-search)")
 	flags.Int("backfill-batch-size", 500, "memories read from the primary store per batch (used with --backfill-search)")
+	flags.Bool("reencrypt", false, "rewrite every memory body and queued callback not sealed under storage.encryption.key, and exit")
 
 	// --help is not an error: pflag prints usage and returns ErrHelp, which should exit cleanly.
 	if err := flags.Parse(args); err != nil {
@@ -286,6 +287,25 @@ func execute(args []string) {
 		return
 	}
 
+	// --reencrypt is a CLI mode like --backfill-search: it rewrites what is not sealed under the
+	// active key and exits without starting the server (see encryption.go).
+	if viper.GetBool("reencrypt") {
+		contentIndex, _ := contentIndexSetting()
+
+		if err := runReencrypt(reencryptConfig{
+			StorageDriver:    viper.GetString("storage.driver"),
+			StorageDirectory: viper.GetString("storage.directory"),
+			PostgresDSN:      viper.GetString("storage.postgres.dsn"),
+			MySQLDSN:         viper.GetString("storage.mysql.dsn"),
+			Encryption:       encryptionConfigFromViper(),
+			NoContentIndex:   !contentIndex,
+		}); err != nil {
+			log.Fatalf("re-encryption failed: %s", err.Error())
+		}
+
+		return
+	}
+
 	// --backfill-search is a CLI mode like --mint-token: it rebuilds the content-search index
 	// from the primary store and exits without starting the server (see backfill.go).
 	if viper.GetBool("backfill-search") {
@@ -305,6 +325,7 @@ func execute(args []string) {
 				PostgresDSN:      viper.GetString("storage.postgres.dsn"),
 				MySQLDSN:         viper.GetString("storage.mysql.dsn"),
 				NoContentIndex:   !contentIndex,
+				Encryption:       encryptionConfigFromViper(),
 			})
 
 			return
@@ -319,6 +340,7 @@ func execute(args []string) {
 			Reindex:          viper.GetBool("reindex"),
 			BatchSize:        viper.GetInt("backfill-batch-size"),
 			Embed:            backfillEmbedderFromViper(),
+			Encryption:       encryptionConfigFromViper(),
 		})
 
 		return
@@ -397,6 +419,11 @@ func run(ctx context.Context, version versionInfo) error {
 	log.Debug("initialising database")
 
 	storeCfg := storeConfigFromViper()
+
+	storeCfg.Keyring, err = keyringFromConfig(storeCfg.Encryption)
+	if err != nil {
+		return err
+	}
 
 	database, err := initStore(storeCfg)
 	if err != nil {
@@ -479,6 +506,7 @@ func run(ctx context.Context, version versionInfo) error {
 		Summariser: summariser,
 		Embedder:   embedder,
 		Notifier:   notifier,
+		Keyring:    storeCfg.Keyring,
 		Version:    version.Version,
 	}, serverConfig(authMethod))
 

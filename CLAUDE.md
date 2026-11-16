@@ -52,7 +52,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   `kubectl apply -k deploy/k8s/overlays/<sqlite|postgres|mysql>`.
 - Offline modes of the service binary, each runs and exits: `--version`, `--check-config`,
   `--schema-version`, `--mint-token --client-id <id> --role <tier> --ttl 24h`, `--backup <path>`,
-  `--backfill-search [--reindex]`.
+  `--backfill-search [--reindex]`, `--reencrypt`.
 - Release: `scripts/release.sh --minor` (it commits and tags, and does not push; see `RELEASE.md`).
 - Reclaim disk: `scripts/cleanup.sh --dry-run`, then without the flag. It never touches
   `~/.hippocampus`.
@@ -76,6 +76,7 @@ The long form of every command, with its design notes, is [docs/design/tooling.m
 | `summarise/`, `embed/` | the optional LLM summariser and embedder (Ollama or OpenAI-compatible) | [llm](docs/design/llm.md) |
 | `archive/` | the export archive format and the object stores (S3 or a directory) | [archive](docs/design/archive.md) |
 | `auth/` | token verification, the tier policy table, group scope claims | [auth](docs/design/auth.md) |
+| `seal/` | encryption at rest: the key ring, sealed values (bodies, callback payloads), sealed archive streams | [storage](docs/design/storage.md) |
 | `notify/` | the outbound callback sink (HTTP, signed) behind `callbacks.*` | [consolidation](docs/design/consolidation.md) |
 | `ratelimit/` | the token-bucket hierarchy behind `rateLimit.*` | - |
 | `stats/` | the periodic count log line and count gauges | [service](docs/design/service.md) |

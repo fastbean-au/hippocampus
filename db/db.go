@@ -13,6 +13,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	_ "modernc.org/sqlite"
 
+	"github.com/fastbean-au/hippocampus/seal"
 	"github.com/fastbean-au/hippocampus/types"
 )
 
@@ -147,6 +148,11 @@ type DB struct {
 	// is_compressed flag — and is set once at startup via SetCompression, before serving, so it
 	// needs no lock.
 	compression compression
+
+	// keyring seals memory bodies and queued callback payloads at rest (see encrypt.go). Nil, the
+	// default, seals nothing and opens nothing sealed. Like compression it governs writes only -
+	// reads follow each row's own key id - and is set once at startup via SetKeyring.
+	keyring *seal.Keyring
 
 	// contentIndexOff suppresses this store's own content-search index (see search.go). Unlike
 	// every policy field above it, it cannot be a setter: initContentSearch runs inside initSchema,
