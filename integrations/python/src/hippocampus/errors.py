@@ -59,6 +59,12 @@ class FailedPrecondition(HippocampusError):
     a consolidation RPC on a replica. who_am_i() reports which of these apply before you call."""
 
 
+class OutOfRange(HippocampusError):
+    """A Watch resume named a cursor the service's change log no longer holds: its caps have
+    removed it, and an unknown number of changes after it. Re-read what you mirror and watch again
+    from a new cursor."""
+
+
 class ResourceExhausted(HippocampusError):
     """A rate limit or a size cap was hit."""
 
@@ -84,6 +90,7 @@ _BY_CODE = {
     grpc.StatusCode.ALREADY_EXISTS: AlreadyExists,
     grpc.StatusCode.INVALID_ARGUMENT: InvalidArgument,
     grpc.StatusCode.FAILED_PRECONDITION: FailedPrecondition,
+    grpc.StatusCode.OUT_OF_RANGE: OutOfRange,
     grpc.StatusCode.RESOURCE_EXHAUSTED: ResourceExhausted,
     grpc.StatusCode.UNAVAILABLE: Unavailable,
     grpc.StatusCode.DEADLINE_EXCEEDED: DeadlineExceeded,

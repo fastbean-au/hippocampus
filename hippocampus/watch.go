@@ -22,6 +22,10 @@ import (
 // The Watch RPC (TODO-3 item 193): the store's changes, streamed over the connection a client
 // already holds.
 //
+// What follows describes the feed with watch.changeLog.enabled off, which is the default. With it
+// on, the same hub is fed from the durable change log instead, and the stream can resume; see
+// watchlog.go (TODO-3 item 204).
+//
 // It is LIVE AND BEST-EFFORT, and that was the decision the item left open. The callback queue's seq
 // looked like the obvious cursor for a resumable stream, but it is not one: a queue row is deleted
 // once its receiver accepts it, rows are written only on the consolidating instance, and only while
@@ -86,6 +90,40 @@ func (w *watcher) visible(items []*contract.WatchItem) []*contract.WatchItem {
 	}
 
 	return out
+}
+
+// filter is the watcher's copy of an event: nothing when the watcher does not take its kind, its
+// items narrowed to the watcher's scope otherwise. A change wholly outside the scope is no event at
+// all, rather than an empty one: an empty event would tell the watcher that something happened
+// elsewhere. A cycle's completion carries no items and goes to every watcher that takes the kind -
+// it is store-global counts, which GetConsolidationStatus serves a scoped caller too.
+func (w *watcher) filter(event *contract.WatchEvent) (*contract.WatchEvent, bool) {
+	if !w.wants(event.GetKind()) {
+
+		return nil, false
+	}
+
+	if event.GetKind() == contract.CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED {
+
+		return event, true
+	}
+
+	visible := w.visible(event.GetItems())
+
+	if len(visible) == 0 {
+
+		return nil, false
+	}
+
+	return &contract.WatchEvent{
+		Kind:    event.GetKind(),
+		Cause:   event.GetCause(),
+		CycleId: event.GetCycleId(),
+		Time:    event.GetTime(),
+		Seq:     event.GetSeq(),
+		Items:   visible,
+		Cycle:   event.GetCycle(),
+	}, true
 }
 
 // offer hands an event to the watcher without waiting, counting it as dropped when the buffer is
@@ -188,11 +226,10 @@ func (h *watchHub) snapshot() []*watcher {
 	return out
 }
 
-// Publish offers the store's committed deliveries to every watcher that wants them.
+// Publish offers the store's committed deliveries to every watcher that wants them. It is the
+// in-process feed, used while the change log is off.
 func (h *watchHub) Publish(deliveries []db.CallbackDelivery) {
-	watchers := h.snapshot()
-
-	if len(watchers) == 0 {
+	if len(h.snapshot()) == 0 {
 
 		return
 	}
@@ -201,75 +238,49 @@ func (h *watchHub) Publish(deliveries []db.CallbackDelivery) {
 	now := time.Now().UnixNano()
 
 	for _, delivery := range deliveries {
-		kind := callbackKinds[delivery.Kind]
-
-		items := make([]*contract.WatchItem, 0, len(delivery.Payload.Items))
-
-		for _, item := range delivery.Payload.Items {
-			items = append(items, &contract.WatchItem{
-				Id:           item.Id,
-				EventId:      item.EventId,
-				Group:        item.Group,
-				Significance: item.Significance,
-				Bytes:        item.Bytes,
-			})
-		}
-
-		for _, w := range watchers {
-			if !w.wants(kind) {
-				continue
-			}
-
-			// A change wholly outside the scope is no event at all to this watcher, rather than an
-			// empty one: an empty event would tell it that something happened elsewhere.
-			visible := w.visible(items)
-
-			if len(visible) == 0 {
-				continue
-			}
-
-			w.offer(ctx, &contract.WatchEvent{
-				Kind:    kind,
-				Cause:   deleteCauses[delivery.Cause],
-				CycleId: delivery.CycleId,
-				Time:    now,
-				Items:   visible,
-			})
-		}
+		h.publishEvent(ctx, &contract.WatchEvent{
+			Kind:    callbackKinds[delivery.Kind],
+			Cause:   deleteCauses[delivery.Cause],
+			CycleId: delivery.CycleId,
+			Time:    now,
+			Items:   watchItems(delivery.Payload.Items),
+		})
 	}
 }
 
-// publishCycle offers a finished sleep cycle's report to every watcher that wants it. The report is
-// store-global counts, which GetConsolidationStatus serves to a scoped caller too, so it goes to
-// every watcher whatever its scope.
-func (h *watchHub) publishCycle(cycleId int64, report *cycleReport) {
+// publishEvent offers one event to every watcher, each receiving its own filtered copy. Both feeds
+// publish through it: the commit path's Publish, and the change log's reader.
+func (h *watchHub) publishEvent(ctx context.Context, event *contract.WatchEvent) {
 	if h == nil {
 
 		return
 	}
 
-	watchers := h.snapshot()
+	for _, w := range h.snapshot() {
+		filtered, ok := w.filter(event)
+		if !ok {
+			continue
+		}
 
-	if len(watchers) == 0 {
+		w.offer(ctx, filtered)
+	}
+}
+
+// announceCycle tells watchers a sleep cycle has finished: through the change log when there is
+// one, so every instance's watchers hear it, and in process otherwise.
+func (s *Server) announceCycle(ctx context.Context, cycleId int64, report *cycleReport) {
+	if s.changes != nil {
+		s.logCycle(ctx, cycleId, report)
 
 		return
 	}
 
-	ctx := context.Background()
-	now := time.Now().UnixNano()
-
-	for _, w := range watchers {
-		if !w.wants(contract.CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED) {
-			continue
-		}
-
-		w.offer(ctx, &contract.WatchEvent{
-			Kind:    contract.CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED,
-			CycleId: cycleId,
-			Time:    now,
-			Cycle:   cycleReportToProto(report),
-		})
-	}
+	s.watch.publishEvent(ctx, &contract.WatchEvent{
+		Kind:    contract.CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED,
+		CycleId: cycleId,
+		Time:    time.Now().UnixNano(),
+		Cycle:   cycleReportToProto(report),
+	})
 }
 
 // startWatch registers the hub with the store, so it captures changes while anybody is watching.
@@ -282,6 +293,8 @@ func (s *Server) startWatch() {
 	if store, ok := s.db.(interface{ SetChangeSink(db.ChangeSink) }); ok {
 		store.SetChangeSink(s.watch)
 	}
+
+	s.startChangeReader()
 }
 
 // CloseWatchers ends every Watch stream with Unavailable, so a client reconnects to an instance that
@@ -314,7 +327,22 @@ func (s *Server) Watch(in *contract.WatchRequest, stream grpc.ServerStreamingSer
 		events: make(chan *contract.WatchEvent, watchBuffer),
 	}
 
-	if s.watch == nil || !s.watch.subscribe(w) {
+	if s.watch == nil {
+
+		return status.Error(codes.Unavailable, "the service is shutting down")
+	}
+
+	// The cursor is read BEFORE subscribing, and the replay below runs after. Read after, it could
+	// land on a change the reader had settled but not yet offered, and the stream would skip that
+	// change when it arrived; read before, anything settled in between is replayed, and anything also
+	// buffered is skipped as already sent.
+	cursor, resuming, err := s.openCursor(ctx, in)
+	if err != nil {
+
+		return err
+	}
+
+	if !s.watch.subscribe(w) {
 
 		return status.Error(codes.Unavailable, "the service is shutting down")
 	}
@@ -322,8 +350,15 @@ func (s *Server) Watch(in *contract.WatchRequest, stream grpc.ServerStreamingSer
 	defer s.watch.unsubscribe(w)
 
 	// Headers go out as soon as the watcher is subscribed, rather than with the first event, so a
-	// client can wait on them and know that nothing it does afterwards will be missed.
-	if err := stream.SendHeader(metadata.MD{}); err != nil {
+	// client can wait on them and know that nothing it does afterwards will be missed. With the
+	// change log they also say where in it the stream starts.
+	header := metadata.MD{}
+
+	if cursor != nil {
+		header.Set(cursorHeader, cursorHeaderValue(cursor))
+	}
+
+	if err := stream.SendHeader(header); err != nil {
 
 		return err
 	}
@@ -333,13 +368,34 @@ func (s *Server) Watch(in *contract.WatchRequest, stream grpc.ServerStreamingSer
 	ctx, span := tel.tracer.Start(ctx, "watch")
 	defer span.End()
 
-	span.AddEvent("watch subscribed", trace.WithAttributes(attribute.Bool("scoped", scoped)))
+	span.AddEvent("watch subscribed", trace.WithAttributes(
+		attribute.Bool("scoped", scoped),
+		attribute.Bool("resuming", resuming),
+		attribute.Bool("change_log", cursor != nil),
+	))
 
 	var sent int64
 
 	defer func() {
 		span.SetAttributes(attribute.Int64("events_sent", sent))
 	}()
+
+	// The resume, or for a live stream whatever settled while it subscribed - usually nothing. The
+	// cursor was checked as it was opened.
+	if cursor != nil {
+		replayed, err := s.replay(ctx, w, cursor, stream)
+
+		sent += replayed
+
+		if err != nil {
+
+			return err
+		}
+
+		if resuming {
+			span.AddEvent("watch resumed", trace.WithAttributes(attribute.Int64("replayed", replayed)))
+		}
+	}
 
 	for {
 		select {
@@ -353,6 +409,28 @@ func (s *Server) Watch(in *contract.WatchRequest, stream grpc.ServerStreamingSer
 			return status.Error(codes.Unavailable, "the service is shutting down")
 
 		case event := <-w.events:
+			if cursor != nil {
+				caught, err := s.catchUp(ctx, w, cursor, stream)
+
+				sent += caught
+
+				if err != nil {
+
+					return err
+				}
+
+				if caught > 0 {
+					span.AddEvent("watch caught up", trace.WithAttributes(attribute.Int64("replayed", caught)))
+				}
+
+				// Already sent by a replay, or by the catch-up just now.
+				if event.GetSeq() <= cursor.seq {
+					continue
+				}
+
+				cursor.seq = event.GetSeq()
+			}
+
 			event.Dropped = w.dropped.Swap(0)
 
 			if event.GetDropped() > 0 {
@@ -368,6 +446,41 @@ func (s *Server) Watch(in *contract.WatchRequest, stream grpc.ServerStreamingSer
 
 		}
 	}
+}
+
+// catchUp replays what a watcher's full buffer dropped, from the change log, and reports how many
+// events it sent. A no-op while nothing has been dropped.
+//
+// The event the stream just took predates every drop - the buffer is a queue, and a drop is what
+// happens when it is full - so replaying from the cursor covers it and everything dropped after it,
+// and the stream then skips the buffered copies up to where the replay reached.
+func (s *Server) catchUp(
+	ctx context.Context,
+	w *watcher,
+	cursor *watchCursor,
+	stream grpc.ServerStreamingServer[contract.WatchEvent],
+) (int64, error) {
+	var sent int64
+
+	for w.dropped.Swap(0) > 0 {
+		// The cursor may be old by now, on a stream whose kinds are rare; if the caps have taken it,
+		// so may they have what was dropped, and the watcher must re-read.
+		if err := s.checkCursor(ctx, cursor.seq); err != nil {
+
+			return sent, err
+		}
+
+		replayed, err := s.replay(ctx, w, cursor, stream)
+
+		sent += replayed
+
+		if err != nil {
+
+			return sent, err
+		}
+	}
+
+	return sent, nil
 }
 
 // requestedWatchKinds resolves a request's kinds, refusing one Watch does not carry. Empty is every

@@ -143,6 +143,13 @@ type DB struct {
 	// against transactions that have not yet committed.
 	changes changeFeed
 
+	// changeLog is the durable change log's policy (see changelog.go). The zero value records
+	// nothing, which is the default. Set once at startup via SetChangeLogPolicy, before serving.
+	changeLog ChangeLogPolicy
+
+	// changeLogTable records that initChangeLog has run, for the reason tombstoneTable does.
+	changeLogTable bool
+
 	// compression is the write-side memory-body compression policy (see compress.go). The zero
 	// value stores every body verbatim. It governs writes only — reads follow each row's own
 	// is_compressed flag — and is set once at startup via SetCompression, before serving, so it
@@ -787,6 +794,18 @@ type Store interface {
 	DeleteForgottenMemories(ctx context.Context, before int64, groups []string) (int64, error)
 	PruneTombstones(ctx context.Context) (int64, error)
 
+	// The change log (see changelog.go). Writing a change is not on this interface, for the forgotten
+	// log's reason: it happens inside the transaction of the change it records. AppendChange is the
+	// exception, for the one change that has no transaction to join - a cycle's completion.
+	// ReadChanges, ChangeLogHead and HasChange are what the service's reader and a resuming Watch
+	// read; PruneChangeLog applies the caps at the end of each sleep cycle.
+	ChangeLogging() bool
+	AppendChange(ctx context.Context, change Change) error
+	ReadChanges(ctx context.Context, afterSeq int64, throughSeq int64, limit int) ([]Change, error)
+	ChangeLogHead(ctx context.Context) (int64, error)
+	HasChange(ctx context.Context, seq int64) (bool, error)
+	PruneChangeLog(ctx context.Context) (int64, error)
+
 	// GetMemoryConsolidationCandidates returns the consolidation decision inputs for named memories,
 	// so ExplainConsolidation can value them without scanning the store.
 	GetMemoryConsolidationCandidates(ctx context.Context, ids []string) ([]IdentifiedMemoryCandidate, error)
@@ -1210,11 +1229,14 @@ func (d *DB) UsedBytes(ctx context.Context) (int64, error) {
 	// when a receiver is down AND it can carry memory bodies, so without this the news that memories
 	// were evicted would evict memories to make room for itself. The server drivers count live
 	// memory/event/link rows explicitly and so exclude all three already. See tombstoneBytes,
-	// searchOutboxBytes and callbackQueueBytes.
+	// searchOutboxBytes and callbackQueueBytes. The change log is a fourth, excluded for the same
+	// reason as the forgotten log: it grows with every write, so counting it would make writing
+	// evict (changeLogBytes).
 	used := (pageCount-freelistCount)*pageSize -
 		d.tombstoneBytes(ctx) -
 		d.searchOutboxBytes(ctx) -
-		d.callbackQueueBytes(ctx)
+		d.callbackQueueBytes(ctx) -
+		d.changeLogBytes(ctx)
 
 	return max(used, 0), nil
 }
@@ -1456,6 +1478,18 @@ func (d *DB) Purge(ctx context.Context) error {
 	if d.callbackTable {
 		if _, err := tx.Exec(`DELETE FROM ` + callbackQueueTable); err != nil {
 			log.Errorf("failed to purge - emptying the callback queue: %s", err.Error())
+			_ = tx.Rollback()
+
+			return err
+		}
+	}
+
+	// And the change log. Every cursor into it then fails its resume with OutOfRange, which is the
+	// answer a watcher of a purged store needs: what it mirrors is gone, and it re-reads. The seq
+	// carries on past the purge on every dialect (a DELETE, not a TRUNCATE), so no cursor is reused.
+	if d.changeLogTable {
+		if _, err := tx.Exec(`DELETE FROM ` + changeLogTable); err != nil {
+			log.Errorf("failed to purge - emptying the change log: %s", err.Error())
 			_ = tx.Rollback()
 
 			return err

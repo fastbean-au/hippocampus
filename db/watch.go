@@ -47,22 +47,38 @@ func (d *DB) SetChangeSink(sink ChangeSink) {
 	d.changes.sink = sink
 }
 
-// watching reports whether a change committed now would reach a watcher.
+// watching reports whether a change committed now must be captured for the feed: because a watcher
+// on this instance would hear it, or because the change log records every change whoever is
+// watching (changelog.go).
 func (d *DB) watching() bool {
-	return d.changes.sink != nil && d.changes.sink.Watching()
+	return d.ChangeLogging() || d.changes.sink != nil && d.changes.sink.Watching()
 }
 
-// recordChanges is how a write or delete path reports its deliveries: staged for the change feed,
+// recordChanges is how a write or delete path reports its deliveries: recorded for the change feed,
 // and queued for the callbacks the policy asks for. It runs inside the caller's transaction, which
 // must then commit through d.commit.
+//
+// The feed takes one of two routes and never both. With the change log on, the delivery is written
+// to it, and every instance's reader publishes it from there - this one included, so publishing it
+// in process as well would hand this instance's watchers each change twice. With it off, it is
+// staged for this instance's watchers alone.
 func (d *DB) recordChanges(tx *sql.Tx, deliveries []CallbackDelivery) error {
 	if len(deliveries) == 0 {
 
 		return nil
 	}
 
-	if d.watching() {
+	switch {
+
+	case d.ChangeLogging():
+		if err := d.logChanges(tx, deliveries); err != nil {
+
+			return err
+		}
+
+	case d.watching():
 		d.stageChanges(tx, deliveries)
+
 	}
 
 	return d.queueCallbacks(tx, d.queueable(deliveries))
@@ -94,10 +110,10 @@ func (d *DB) queueable(deliveries []CallbackDelivery) []CallbackDelivery {
 	return out
 }
 
-// stageChanges holds deliveries against their transaction until it ends. Bodies are dropped here:
-// they are captured only for callbacks.includeBodies, and the feed never carries one.
-func (d *DB) stageChanges(tx *sql.Tx, deliveries []CallbackDelivery) {
-	stripped := make([]CallbackDelivery, 0, len(deliveries))
+// withoutBodies copies deliveries with their bodies dropped: they are captured only for
+// callbacks.includeBodies, and the feed never carries one.
+func withoutBodies(deliveries []CallbackDelivery) []CallbackDelivery {
+	out := make([]CallbackDelivery, 0, len(deliveries))
 
 	for _, delivery := range deliveries {
 		items := make([]CallbackItem, len(delivery.Payload.Items))
@@ -110,8 +126,15 @@ func (d *DB) stageChanges(tx *sql.Tx, deliveries []CallbackDelivery) {
 
 		delivery.Payload = CallbackPayload{Items: items}
 
-		stripped = append(stripped, delivery)
+		out = append(out, delivery)
 	}
+
+	return out
+}
+
+// stageChanges holds deliveries against their transaction until it ends.
+func (d *DB) stageChanges(tx *sql.Tx, deliveries []CallbackDelivery) {
+	stripped := withoutBodies(deliveries)
 
 	d.changes.mu.Lock()
 	defer d.changes.mu.Unlock()

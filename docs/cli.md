@@ -205,7 +205,7 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | `forgotten clear` | delete records from the forgotten log (`--before` or `--all`)                                  |
 | `callbacks queue` | show the outbound callback queue: depth, ages, attempt counts (`--kind`, `--limit`)            |
 | `callbacks clear` | discard pending callbacks (`--before` or `--all`)                                              |
-| `watch`           | follow the store's changes as they commit, until interrupted (`--kind`, repeatable)            |
+| `watch`           | follow the store's changes as they commit, until interrupted (`--kind`, `--resume`)            |
 | `purge`           | delete every event and memory (requires `--yes`)                                               |
 
 `sleep --dry-run` reports what a cycle would forget and deletes nothing — see
@@ -254,9 +254,12 @@ across groups, so there is nothing to scope it by.
 an event forgotten, a sleep cycle finished — and runs until interrupted, ignoring
 `--timeout-seconds`. `--kind` (repeatable) narrows it to `memory-stored`, `memory-updated`,
 `memory-forgotten`, `event-forgotten` or `sleep-completed`; with `--output json` each event is one
-JSON object per line. It needs the gRPC transport (the default), since the HTTP gateway cannot stream. It is live
-only: what happened while it was not running is not replayed, and a line reporting dropped events
-means it fell behind. See [Watching for changes](api.md#watching-for-changes).
+JSON object per line. It needs the gRPC transport (the default), since the HTTP gateway cannot stream. Without
+the service's [change log](configuration.md#the-change-log) it is live only: what happened while it
+was not running is not replayed, and a line reporting dropped events means it fell behind. With the
+log on, each line starts with the change's `#seq`, and `--resume --after-seq N` replays what came
+after `N` before going live (`--after-seq 0`, everything the log holds). See [Watching for
+changes](api.md#watching-for-changes).
 
 `whoami` reports the token's [group scope](configuration.md#group-scoping) on its own line —
 `groups: unscoped (whole store)` when the token carries none, which is the state to check first when

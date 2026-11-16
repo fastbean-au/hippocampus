@@ -250,6 +250,11 @@ the service's own key reads, so a key cannot be added without a row; regenerate 
 | `transfer.tls.insecureSkipVerify` | — | Skip verifying the transfer target's certificate (dev only) | [Transfer and archive](#transfer-and-archive) |
 | `transfer.tls.keyFile` | — | Its key | [Transfer and archive](#transfer-and-archive) |
 | `transfer.token` | — | Bearer token for the target | [Transfer and archive](#transfer-and-archive) |
+| `watch.changeLog.enabled` | `false` | Keep a change log | [The change log](#the-change-log) |
+| `watch.changeLog.maxAgeHours` | `24` | Keep for at most (hours) | [Every watch key](#every-watch-key) |
+| `watch.changeLog.maxBytes` | — | Keep at most (bytes) | [Every watch key](#every-watch-key) |
+| `watch.changeLog.maxRows` | `1000000` | Keep at most (changes) | [Every watch key](#every-watch-key) |
+| `watch.changeLog.pollIntervalMillis` | `500` | Read the log every (milliseconds) | [Every watch key](#every-watch-key) |
 
 <!-- config-index:end -->
 
@@ -2795,6 +2800,45 @@ so a retry of an identical body signs differently.
 | `callbacks.tls.certFile`            | `""`      | Client certificate for mutual TLS; set with `callbacks.tls.keyFile` or neither.                 |
 | `callbacks.tls.keyFile`             | `""`      | The matching key.                                                                               |
 | `callbacks.tls.insecureSkipVerify`  | `false`   | Dev-only: disables certificate verification.                                                    |
+
+### The change log
+
+`watch.changeLog.enabled` records every change the [`Watch`](api.md#watching-for-changes) stream
+carries into a table in the store, in the same transaction as the change. Two things follow, and
+neither is possible without it:
+
+- **A stream can resume.** Each event carries the log's `seq`; a client that reconnects with
+  `resume: true` and the last `seq` it received is replayed what it missed before the stream goes
+  live. A watcher too slow for its buffer is caught up from the log rather than told it dropped
+  events.
+- **Any instance serves the whole store.** Every instance reads the log, so on PostgreSQL or MySQL a
+  watcher on a replica hears the consolidating instance's forgetting and every other replica's
+  writes. Set the key the same on every instance sharing a store: one that does not record leaves
+  its writes out of everyone's feed.
+
+It costs one row per write, and one per batch a deletion removes. A row carries the ids, groups,
+significance ranks and sizes of what changed — never a body — so it is not sealed under
+`storage.encryption`, the memories table holding the same columns in plaintext beside it. The log is
+excluded from `consolidation.capacityBytes`, like the forgotten log, and reported beside it in
+`GetConsolidationStatus`'s ancillary storage. The consolidating instance applies its caps at the end
+of every cycle; a client whose cursor the caps have removed is refused with `OUT_OF_RANGE` and
+re-reads.
+
+Each instance reads the log every `pollIntervalMillis`, so an event arrives roughly that long after
+it commits. On PostgreSQL and MySQL a sequence number is visible only once its transaction commits, so
+the reader holds a missing number open for up to ten seconds before taking it to have rolled back,
+and the changes after it wait with it. A rollback of a change-recording write is rare; SQLite has one
+writer and never leaves such a gap.
+
+#### Every watch key
+
+| Key                                   | Default   | Meaning                                                                                       |
+| ------------------------------------- | --------- | --------------------------------------------------------------------------------------------- |
+| `watch.changeLog.enabled`             | `false`   | Record every change into the change log, making `Watch` resumable and store-wide.             |
+| `watch.changeLog.maxRows`             | `1000000` | Row cap; the oldest changes go first. 0 removes the bound.                                    |
+| `watch.changeLog.maxBytes`            | `0`       | Byte cap, measured against the stored payloads. 0 removes the bound.                          |
+| `watch.changeLog.maxAgeHours`         | `24`      | Age cap: how long a disconnected client can be away and still resume. 0 removes the bound.    |
+| `watch.changeLog.pollIntervalMillis`  | `500`     | How often each instance reads the log for its watchers.                                       |
 
 ### Transfer and archive
 

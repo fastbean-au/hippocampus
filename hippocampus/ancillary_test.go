@@ -96,15 +96,16 @@ func TestSleepMeasuresTheStorageOutsideTheTarget(t *testing.T) {
 		return table.GetBytes()
 	}
 
-	want := footprint(log) + footprint(ancillary.GetSearchOutbox()) + footprint(ancillary.GetCallbackQueue())
+	want := footprint(log) + footprint(ancillary.GetSearchOutbox()) + footprint(ancillary.GetCallbackQueue()) +
+		footprint(ancillary.GetChangeLog())
 
 	if ancillary.GetTotalBytes() != want {
-		t.Errorf("total_bytes = %d, want %d, the three tables' footprints summed", ancillary.GetTotalBytes(), want)
+		t.Errorf("total_bytes = %d, want %d, the four tables' footprints summed", ancillary.GetTotalBytes(), want)
 	}
 
-	// The other two are reported whatever their state, because an omitted table reads as a table
-	// with nothing in it - which is the opposite conclusion from a table nobody enabled.
-	if ancillary.GetSearchOutbox() == nil || ancillary.GetCallbackQueue() == nil {
+	// The others are reported whatever their state, because an omitted table reads as a table with
+	// nothing in it - which is the opposite conclusion from a table nobody enabled.
+	if ancillary.GetSearchOutbox() == nil || ancillary.GetCallbackQueue() == nil || ancillary.GetChangeLog() == nil {
 		t.Error("a table was omitted rather than reported as disabled")
 	}
 }

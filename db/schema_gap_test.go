@@ -304,6 +304,9 @@ func TestServerSchemaInitFailuresStopTheRun(t *testing.T) {
 			mock.ExpectQuery(`SELECT 1 FROM ` + keyLedgerTable).WillReturnError(errors.New("does not exist"))
 			mock.ExpectExec(`DROP TABLE IF EXISTS ` + keyLedgerBuildTable).WillReturnError(errors.New("boom"))
 		},
+		"change_log": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS ` + changeLogTable).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, dialect := range serverDialects {

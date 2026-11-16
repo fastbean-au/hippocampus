@@ -131,6 +131,10 @@ func serverConfig(authMethod string) hippocampus.Config {
 			MaxBytesPerEntry: viper.GetInt64("storage.indexRebuild.maxBytesPerEntry"),
 		},
 
+		Watch: hippocampus.WatchConfig{
+			ChangeLogPollInterval: time.Duration(viper.GetInt("watch.changeLog.pollIntervalMillis")) * time.Millisecond,
+		},
+
 		Callbacks: hippocampus.CallbacksConfig{
 			Bounds: db.QueueBounds{
 				MaxAge:   hours("callbacks.maxAgeHours"),

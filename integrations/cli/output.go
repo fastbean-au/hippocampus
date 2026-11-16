@@ -53,6 +53,12 @@ func (r *renderer) renderWatchEvent(event *contract.WatchEvent) error {
 
 	kind := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(event.GetKind().String(), "CALLBACK_KIND_"), "_", "-"))
 
+	// The change log's cursor, when the service keeps one, so a reader can resume from the last line
+	// it saw with --after-seq.
+	if event.GetSeq() > 0 {
+		kind = fmt.Sprintf("#%d  %s", event.GetSeq(), kind)
+	}
+
 	if cycle := event.GetCycle(); cycle != nil {
 		r.line("%s  %s  consolidated %d, evicted %d, expired %d",
 			formatNanos(event.GetTime()),

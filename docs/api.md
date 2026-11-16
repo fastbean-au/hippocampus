@@ -102,6 +102,10 @@ cache). It needs the `reader` tier.
 `kinds` in the request narrows the stream; empty carries all five. `MEMORIES_AT_RISK` is refused —
 it costs a preview scan per cycle and stays a callback. No event carries a memory body.
 
+What a stream guarantees depends on [`watch.changeLog.enabled`](configuration.md#the-change-log).
+
+With the change log **off** (the default):
+
 - **Live and best-effort.** A watcher sees what commits from the moment it is subscribed — when the
   response headers arrive — and nothing from before. There is no cursor to resume from: after a
   reconnect, re-read what you need (`GetMemories`, `GetForgottenMemories`).
@@ -110,6 +114,22 @@ it costs a preview scan per cycle and stays a callback. No event carries a memor
   many it missed in `dropped`. Non-zero means anything mirrored wants re-reading.
 - **Per instance.** On PostgreSQL and MySQL each instance publishes only what it committed: forgetting
   is seen on the consolidating instance, a write on the instance that served it.
+
+With it **on**:
+
+- **Resumable.** Every event carries `seq`, and the response headers carry
+  `hippocampus-watch-seq`, the cursor the stream starts after. Reconnect with `resume: true` and
+  `after_seq` set to the last `seq` received (or that header) and the log after it is replayed
+  before the stream goes live; `after_seq: 0` replays everything the log holds. A cursor the log's
+  caps have removed is refused with `OUT_OF_RANGE`: re-read, and start a new stream.
+  `FAILED_PRECONDITION` means the log is off.
+- **Caught up, not dropped.** A watcher too slow for its buffer is replayed what it missed from the
+  log (`hippocampus.watch.replayed`); `dropped` stays 0.
+- **Store-wide.** Every instance reads the log, so any instance serves every instance's changes.
+- **A poll behind.** Events arrive about `watch.changeLog.pollIntervalMillis` after they commit, in
+  `seq` order. `seq` increases along a stream but is not contiguous: other watchers' kinds and
+  groups, and rolled-back writes, take numbers too.
+
 - **Scoped.** A group-scoped token sees only items in its groups, a forgotten record judged by the
   group it had; a change wholly outside the scope is not sent at all. A cycle's completion is
   store-global counts and goes to every watcher.
@@ -118,6 +138,10 @@ it costs a preview scan per cycle and stays a callback. No event carries a memor
 
 ```sh
 grpcurl -H "authorization: Bearer $TOKEN" -d '{"kinds":["CALLBACK_KIND_MEMORY_FORGOTTEN"]}' \
+  localhost:50051 hippocampus.v1.Hippocampus/Watch
+
+# With the change log on: resume after the last seq this client received.
+grpcurl -H "authorization: Bearer $TOKEN" -d '{"resume":true,"after_seq":"1042"}' \
   localhost:50051 hippocampus.v1.Hippocampus/Watch
 ```
 

@@ -35,6 +35,7 @@ type Config struct {
 	Outbox          db.QueueBounds
 	IndexRebuild    IndexRebuildConfig
 	Callbacks       CallbacksConfig
+	Watch           WatchConfig
 	ScheduledExport ScheduledExportConfig
 	Topology        TopologyConfig
 	Deployment      Deployment
@@ -126,6 +127,15 @@ type ReconcileConfig struct {
 	Interval   time.Duration
 	BatchSize  int
 	StaleSweep bool
+}
+
+// WatchConfig is the watch.* block as far as the server needs it. The change log's switch and caps
+// are the store's policy (db.ChangeLogPolicy), installed on it by the caller, which is how every
+// instance sharing a store records into it whether or not it serves a watcher.
+type WatchConfig struct {
+	// ChangeLogPollInterval is watch.changeLog.pollIntervalMillis: how often this instance reads the
+	// change log for its watchers.
+	ChangeLogPollInterval time.Duration
 }
 
 // CallbacksConfig is the callbacks.* block as far as the server's queue and dispatcher need it. The

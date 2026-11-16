@@ -92,6 +92,30 @@ func TestRunWatchWritesOneJSONObjectPerLine(t *testing.T) {
 	}
 }
 
+func TestRunWatchResumesFromACursor(t *testing.T) {
+	client := &fakeClient{watchEvents: []*contract.WatchEvent{{
+		Kind:  contract.CallbackKind_CALLBACK_KIND_MEMORY_STORED,
+		Time:  1,
+		Seq:   43,
+		Items: []*contract.WatchItem{{Id: "m1"}},
+	}}}
+
+	var out bytes.Buffer
+
+	if err := runWatch(context.Background(), client, watchFlags(t, "--resume", "--after-seq", "42"), &renderer{out: &out}); err != nil {
+		t.Fatalf("runWatch: %s", err)
+	}
+
+	request, ok := client.req.(*contract.WatchRequest)
+	if !ok || !request.GetResume() || request.GetAfterSeq() != 42 {
+		t.Errorf("the request is %v, want a resume after 42", client.req)
+	}
+
+	if !strings.Contains(out.String(), "#43  memory-stored  m1") {
+		t.Errorf("the output does not carry the event's seq:\n%s", out.String())
+	}
+}
+
 func TestRunWatchRefusesAnUnknownKind(t *testing.T) {
 	if err := runWatch(context.Background(), &fakeClient{}, watchFlags(t, "--kind", "everything"), &renderer{out: &bytes.Buffer{}}); err == nil {
 		t.Error("an unknown kind was accepted")

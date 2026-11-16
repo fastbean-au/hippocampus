@@ -137,6 +137,7 @@ func resetTestStore(t *testing.T, d *DB) {
 		searchOutboxTable,
 		callbackQueueTable,
 		keyLedgerTable,
+		changeLogTable,
 	}
 
 	if d.instanceTable {
@@ -172,6 +173,7 @@ func resetTestSequences(t *testing.T, d *DB) {
 			`SELECT setval(pg_get_serial_sequence('` + tombstonesTable + `', 'seq'), 1, false)`,
 			`SELECT setval(pg_get_serial_sequence('` + searchOutboxTable + `', 'seq'), 1, false)`,
 			`SELECT setval(pg_get_serial_sequence('` + callbackQueueTable + `', 'seq'), 1, false)`,
+			`SELECT setval(pg_get_serial_sequence('` + changeLogTable + `', 'seq'), 1, false)`,
 		}
 
 	case driverMySQL:
@@ -179,6 +181,7 @@ func resetTestSequences(t *testing.T, d *DB) {
 			`ALTER TABLE ` + tombstonesTable + ` AUTO_INCREMENT = 1`,
 			`ALTER TABLE ` + searchOutboxTable + ` AUTO_INCREMENT = 1`,
 			`ALTER TABLE ` + callbackQueueTable + ` AUTO_INCREMENT = 1`,
+			`ALTER TABLE ` + changeLogTable + ` AUTO_INCREMENT = 1`,
 		}
 
 	default:

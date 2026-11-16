@@ -571,6 +571,7 @@ drivers](#index-bloat-on-the-server-drivers).
 | [Forgotten log](#what-was-forgotten--the-forgotten-log)                  | `memory_tombstones`   | `consolidation.tombstones.maxRows` / `.maxBytes` / `.maxAgeInDays`, trimmed each cycle | 100,000 rows or 30 days (feature is off) |
 | [Delete outbox](configuration.md#the-delete-outbox)                      | `search_outbox`       | `opensearch.outbox.maxRows` / `.maxBytes` / `.maxAgeHours`                             | 1,000,000 rows or 24 hours               |
 | [Deletion callbacks](#being-told-what-was-forgotten--outbound-callbacks) | `callback_queue`      | `callbacks.maxRows` / `.maxBytes` / `.maxAgeHours`                                     | 1,000,000 rows or 24 hours               |
+| [Change log](configuration.md#the-change-log)                            | `change_log`          | `watch.changeLog.maxRows` / `.maxBytes` / `.maxAgeHours`, trimmed each cycle           | 1,000,000 rows or 24 hours (feature is off) |
 | [Peer registry](#seeing-the-deployment) (server drivers)                 | `instances`           | one row per live instance, each pruned against its own heartbeat interval              | negligible                               |
 | [Significance registry](api.md#the-registry-forgets-too)       | `significance_levels` | `consolidation.significanceLevels.unusedRetentionInDays`, reaped each cycle            | 7 days after a value falls out of use    |
 
@@ -622,7 +623,7 @@ startup warning where the shape is dangerous — `callbacks.includeBodies` with 
 is the one that matters, since it is the arrangement in which nothing bounds the queue's size at all.
 
 **These tables are reported.** `hippocampus.ancillary_bytes` carries what each of them holds,
-labelled by `component` (`forgotten_log`, `search_outbox`, `callback_queue`), measured once per sleep
+labelled by `component` (`forgotten_log`, `search_outbox`, `callback_queue`, `change_log`), measured once per sleep
 cycle; sum over the label for the figure to add to `capacityBytes` when sizing a disk. The console's
 Deployment tab shows the same reading under the callback queue, and `hippo consolidation status`
 carries it as the response's `ancillary` block — where each table also reports its caps, so the
@@ -1783,6 +1784,8 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.forgetting.stalls`              | counter       | `reason`                              | Sleep cycles whose decay passes were held off — the store has stopped forgetting                                       |
 | `hippocampus.watch.subscribers`              | gauge         |                                       | [`Watch`](api.md#watching-for-changes) streams open on this instance                                                   |
 | `hippocampus.watch.dropped`                  | counter       |                                       | `Watch` events dropped because a watcher was not reading fast enough; each watcher is told how many it missed          |
+| `hippocampus.watch.replayed`                 | counter       |                                       | Change log rows read again for a `Watch` stream that resumed or fell behind (`watch.changeLog.enabled`)                |
+| `hippocampus.watch.gaps_passed`              | counter       |                                       | Gaps in the change log's sequence the reader stopped waiting on, taken to be rolled-back writes                        |
 
 Three things the shape of this list says. The **`search.*` instruments exist only under
 `opensearch.enabled`** — the built-in content index runs inside the primary write and has no queue to

@@ -38,6 +38,23 @@ def test_watch_translates_a_refusal(client, service):
         list(client.watch(kinds=[pb.CALLBACK_KIND_MEMORIES_AT_RISK]))
 
 
+def test_watch_sends_a_resume(client, service):
+    service.responses["Watch"] = [pb.WatchEvent(kind=pb.CALLBACK_KIND_MEMORY_STORED, seq=43)]
+
+    events = list(client.watch(resume=True, after_seq=42))
+
+    assert [event.seq for event in events] == [43]
+    assert service.requests["Watch"].resume is True
+    assert service.requests["Watch"].after_seq == 42
+
+
+def test_watch_raises_out_of_range_for_an_expired_cursor(client, service):
+    service.fail_with = (grpc.StatusCode.OUT_OF_RANGE, "the change log no longer holds seq 42")
+
+    with pytest.raises(errors.OutOfRange):
+        list(client.watch(resume=True, after_seq=42))
+
+
 def test_async_watch_yields_each_event(server, service):
     service.responses["Watch"] = EVENTS
 

@@ -92,7 +92,7 @@ type schemaMigration struct {
 // these steps arrived across seventeen releases, several of them are already the accumulated result
 // of earlier ones, and no store anywhere is at an intermediate point between them - every store in
 // existence has either seen all of them or is about to. What the ledger needs to be honest about is
-// the future, and it is: version 19 is where this list ends today, and a store recording 20 was
+// the future, and it is: version 20 is where this list ends today, and a store recording 21 was
 // written by something this build has not met.
 func (d *DB) migrations() []schemaMigration {
 	return []schemaMigration{
@@ -252,6 +252,12 @@ func (d *DB) migrations() []schemaMigration {
 			version: 19,
 			name:    "key_ledger",
 			apply:   (*DB).initKeyLedger,
+		},
+		{
+			// The durable change log behind a resumable, cross-instance Watch (changelog.go).
+			version: 20,
+			name:    "change_log",
+			apply:   (*DB).initChangeLog,
 		},
 	}
 }

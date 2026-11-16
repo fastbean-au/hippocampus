@@ -275,7 +275,7 @@ func TestWatchReportsASleepCycleToEveryWatcher(t *testing.T) {
 
 	w := startWatching(t, s, scopedContext("a"), &contract.WatchRequest{})
 
-	s.watch.publishCycle(42, &cycleReport{startedAt: time.Unix(0, 100), trigger: "manual", memoriesConsolidated: 3, success: true})
+	s.announceCycle(context.Background(), 42, &cycleReport{startedAt: time.Unix(0, 100), trigger: "manual", memoriesConsolidated: 3, success: true})
 
 	event := w.next(t)
 

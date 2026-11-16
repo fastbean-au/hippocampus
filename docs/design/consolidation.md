@@ -279,3 +279,31 @@ from viper once in `New()`. `sleep.go` holds the core consolidation logic:
   grpc-go lists streams apart from methods and a guard over `Methods` alone never saw `Watch`. (8)
   **Shutdown** closes the hub before `GracefulStop`, which otherwise waits on every open stream
   until its timeout. `Watch` is excluded from the latency alert, as the other long RPCs are.
+
+- **The change log (TODO-3 item 204)** makes `Watch` resumable and store-wide, opt-in
+  (`watch.changeLog.enabled`). (1) **A row per delivery, not per item**, in `change_log`
+  (migration 20, `db/changelog.go`): what the in-process feed publishes as one event is one row, so a
+  five-hundred-memory deletion is one insert. Bodies are stripped, so the payload holds what the
+  memories table holds in plaintext and is not sealed. (2) **Written in the change's transaction**,
+  through `recordChanges`, which takes one route or the other: logged, or staged for the in-process
+  sink, never both, since every instance's reader publishes from the log and would otherwise hand
+  this instance's watchers each change twice. A cycle's completion has no transaction and takes its
+  own (`AppendChange`), with the report proto-encoded by the service. (3) **Beside the capacity
+  target**, like the forgotten log: excluded from `UsedBytes` (80 bytes a row plus the measured
+  payload), reported in `AncillaryStorage`, pruned by row, byte and age caps on the consolidator at
+  the end of each cycle, emptied by `Purge` (whose cursors then fail with `OUT_OF_RANGE`). (4)
+  **Polling, not `LISTEN/NOTIFY`.** Each instance's reader (`hippocampus/watchlog.go`) reads past its
+  cursor every `pollIntervalMillis`: one primary-key range read, the same on three dialects, and what
+  a notification scheme falls back to after a reconnect anyway. NOTIFY would cut Postgres latency
+  alone and can sit under the same cursor later. (5) **Commit order is not seq order** on a server
+  dialect: a seq is taken at insert and visible at commit. The reader advances only over a
+  contiguous run, holding a gap for `changeGapGrace` (10 s) before taking it as a rollback, and every
+  replay reads only up to the reader's settled cursor, so a replay can never pass a change still in
+  a gap. The cursor is stored before the change is offered, so a watcher that holds an event can
+  always replay up to it. (6) **Resume and catch-up are one replay.** A stream reads its cursor
+  before subscribing and replays from it after, deduplicating buffered events by seq; a stream whose
+  buffer overflowed replays from its cursor instead of reporting `dropped`. A cursor is judged by
+  whether its row still exists (`HasChange`): the client was handed it, so it existed, and if the
+  caps took it they may have taken what followed. (7) Rejected: a watermark table for "trimmed
+  through" (existence of the cursor row says the same with no extra state); `optional after_seq`
+  (the contract uses no proto3 `optional`, and `resume` makes "replay from the start" expressible).

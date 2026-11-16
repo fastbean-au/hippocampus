@@ -477,6 +477,10 @@ var schemaFixtureTags = map[string]string{
 	// upgraded store, and TestKeyLedgerSeedsFromAnExistingStore proves the seeding.
 	"key_ledger": "v0.38.3",
 
+	// The change log. Every released schema predates it, so the newest fixture is named, which
+	// proves the table is built on an upgraded store; it has no data to migrate.
+	"change_log": "v0.38.3",
+
 	// The server dialects' content index. Every released server schema predates it, so the newest
 	// fixture is the one that exercises it - and it exercises the part that matters, which is not
 	// the CREATE TABLE but the backfill: a store upgraded into this index and left empty answers

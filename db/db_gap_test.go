@@ -363,6 +363,9 @@ func TestInitSchema_MigrationFailuresStopTheRun(t *testing.T) {
 			mock.ExpectQuery(`SELECT 1 FROM ` + keyLedgerTable).WillReturnError(errors.New("no such table"))
 			mock.ExpectExec(`DROP TABLE IF EXISTS ` + keyLedgerBuildTable).WillReturnError(errors.New("boom"))
 		},
+		"change_log": func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS ` + changeLogTable).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, migration := range (&DB{driver: driverSQLite}).migrations() {

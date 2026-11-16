@@ -1218,6 +1218,8 @@ class Hippocampus(_Surface):
         self,
         *,
         kinds: Sequence[int] = (),
+        resume: bool = False,
+        after_seq: int = 0,
         timeout: Optional[float] = None,
     ) -> Iterator[pb.WatchEvent]:
         """Follow the store's changes as they commit, until the iterator is closed.
@@ -1225,15 +1227,22 @@ class Hippocampus(_Surface):
             for event in client.watch(kinds=[pb.CALLBACK_KIND_MEMORY_FORGOTTEN]):
                 ...
 
-        Live only: what happened before the first event is not replayed, and a non-zero
-        `event.dropped` means this watcher fell behind and anything it mirrors wants re-reading.
+        Without the service's change log (watch.changeLog.enabled) it is live only: what happened
+        before the first event is not replayed, and a non-zero `event.dropped` means this watcher
+        fell behind and anything it mirrors wants re-reading. With it, each event carries `seq`, and
+        `resume=True, after_seq=<the last seq received>` replays what came after it before going
+        live (after_seq 0 replays everything the log holds); a cursor the log no longer holds raises
+        `errors.OutOfRange`, which means re-read and start again.
+
         `timeout` is a deadline for the whole stream, and none by default - the client's per-call
         timeout would end a watch that is meant to run indefinitely. Ending the iteration cancels
         the call.
         """
 
         call = self.stub.Watch(
-            pb.WatchRequest(kinds=list(kinds)), timeout=timeout, metadata=self._metadata
+            pb.WatchRequest(kinds=list(kinds), resume=resume, after_seq=after_seq),
+            timeout=timeout,
+            metadata=self._metadata,
         )
 
         try:
@@ -1367,12 +1376,16 @@ class AsyncHippocampus(_Surface):
         self,
         *,
         kinds: Sequence[int] = (),
+        resume: bool = False,
+        after_seq: int = 0,
         timeout: Optional[float] = None,
     ) -> AsyncIterator[pb.WatchEvent]:
         """`Hippocampus.watch` for asyncio: iterate it with `async for` rather than awaiting it."""
 
         call = self.stub.Watch(
-            pb.WatchRequest(kinds=list(kinds)), timeout=timeout, metadata=self._metadata
+            pb.WatchRequest(kinds=list(kinds), resume=resume, after_seq=after_seq),
+            timeout=timeout,
+            metadata=self._metadata,
         )
 
         try:

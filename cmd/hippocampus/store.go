@@ -129,6 +129,10 @@ type storeConfig struct {
 
 	Tombstones db.TombstonePolicy
 
+	// ChangeLog is the watch.changeLog.* policy. It is the store's, not the service's: every
+	// instance sharing a store records into it, whether or not it serves a watcher.
+	ChangeLog db.ChangeLogPolicy
+
 	// ContentIndex and ContentIndexReason are contentIndexSetting's decision and why it was taken.
 	ContentIndex       bool
 	ContentIndexReason string
@@ -222,6 +226,7 @@ func storeConfigFromViper() storeConfig {
 			MaxBytes:     viper.GetInt64("consolidation.tombstones.maxBytes"),
 			MaxAgeInDays: viper.GetInt("consolidation.tombstones.maxAgeInDays"),
 		},
+		ChangeLog:          changeLogPolicyFromViper(),
 		ContentIndex:       contentIndex,
 		ContentIndexReason: contentIndexReason,
 	}
@@ -339,6 +344,12 @@ func initStore(cfg storeConfig) (*db.DB, error) {
 	}
 
 	database.SetTombstonePolicy(cfg.Tombstones)
+
+	// The change log behind a resumable, cross-instance Watch. Off by default, bounded when on, and
+	// beside the capacity target for the forgotten log's reason.
+	warnIfUnboundedChangeLog(cfg.ChangeLog)
+
+	database.SetChangeLogPolicy(cfg.ChangeLog)
 
 	warnIfOverCapacity(database, cfg.CapacityBytes)
 

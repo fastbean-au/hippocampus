@@ -424,6 +424,11 @@ type Server struct {
 	// Built ahead of the sleep loop, so the first cycle's changes have somewhere to go.
 	watch *watchHub
 
+	// changes is the change log's reader (watchlog.go), nil when the store keeps no change log - in
+	// which case the hub is fed in process. changeLogPoll is watch.changeLog.pollIntervalMillis.
+	changes       *changeReader
+	changeLogPoll time.Duration
+
 	callbackBounds db.QueueBounds
 
 	// callbacksConfig is the callbacks.* configuration, kept so a standby that takes over can start
@@ -665,6 +670,7 @@ func New(deps Dependencies, cfg Config) *Server {
 		indexRebuild:         cfg.IndexRebuild,
 		indexRebuildFailures: make(map[string]time.Time),
 		callbacksConfig:      cfg.Callbacks,
+		changeLogPoll:        cfg.Watch.ChangeLogPollInterval,
 		scheduledExport:      cfg.ScheduledExport,
 		gatewayEnabled:       cfg.Deployment.GatewayPort > 0,
 	}
@@ -916,6 +922,8 @@ func (s *Server) Stop() {
 		s.stopTopologyProber()
 
 		s.watch.close()
+
+		s.stopChangeReader()
 
 		if s.stopCallbacks != nil {
 			close(s.stopCallbacks)

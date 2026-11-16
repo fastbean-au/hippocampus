@@ -353,13 +353,24 @@ type HippocampusClient interface {
 	// webhooks, over the connection a client already holds, so a client behind NAT or a broker
 	// bridge can follow the store without running an HTTP receiver the service must reach.
 	//
-	// It is LIVE AND BEST-EFFORT. A watcher sees what this instance commits from the moment it
-	// subscribes - which is when the response headers arrive - and nothing from before; there is no cursor to resume from, so a client that
-	// reconnects re-reads whatever it needs (GetMemories, GetForgottenMemories) rather than
-	// replaying. A watcher that falls behind is not allowed to slow the store down: the events it
-	// could not take are dropped and counted, and the next event it does receive reports how many
-	// in dropped. On PostgreSQL and MySQL each instance publishes only its own changes, so forgetting
-	// is seen on the consolidating instance and a write on the instance that served it.
+	// What it guarantees depends on watch.changeLog.enabled.
+	//
+	// Off (the default), it is LIVE AND BEST-EFFORT. A watcher sees what this instance commits from
+	// the moment it subscribes - which is when the response headers arrive - and nothing from
+	// before; there is no cursor, so a client that reconnects re-reads whatever it needs
+	// (GetMemories, GetForgottenMemories) rather than replaying. A watcher that falls behind is not
+	// allowed to slow the store down: the events it could not take are dropped and counted, and the
+	// next event it does receive reports how many in dropped. On PostgreSQL and MySQL each instance
+	// publishes only its own changes, so forgetting is seen on the consolidating instance and a write
+	// on the instance that served it.
+	//
+	// On, every change is written to a durable change log in the same transaction, and every
+	// instance reads it - so any instance serves the whole store's feed, each event carries the
+	// log's seq, and a client can RESUME from the last seq it received (WatchRequest.resume). A
+	// watcher that falls behind catches up from the log instead of dropping. The response headers
+	// carry hippocampus-watch-seq, the cursor the stream starts after. A resume whose cursor the log's
+	// caps have since removed is refused with OUT_OF_RANGE, which means re-read and start again.
+	// Events arrive a poll interval after they commit (watch.changeLog.pollIntervalMillis).
 	//
 	// A group-scoped caller sees only items in its groups; a forgotten memory or event is reported
 	// with the group it had. A cycle's completion is store-global counts, as GetConsolidationStatus
@@ -1115,13 +1126,24 @@ type HippocampusServer interface {
 	// webhooks, over the connection a client already holds, so a client behind NAT or a broker
 	// bridge can follow the store without running an HTTP receiver the service must reach.
 	//
-	// It is LIVE AND BEST-EFFORT. A watcher sees what this instance commits from the moment it
-	// subscribes - which is when the response headers arrive - and nothing from before; there is no cursor to resume from, so a client that
-	// reconnects re-reads whatever it needs (GetMemories, GetForgottenMemories) rather than
-	// replaying. A watcher that falls behind is not allowed to slow the store down: the events it
-	// could not take are dropped and counted, and the next event it does receive reports how many
-	// in dropped. On PostgreSQL and MySQL each instance publishes only its own changes, so forgetting
-	// is seen on the consolidating instance and a write on the instance that served it.
+	// What it guarantees depends on watch.changeLog.enabled.
+	//
+	// Off (the default), it is LIVE AND BEST-EFFORT. A watcher sees what this instance commits from
+	// the moment it subscribes - which is when the response headers arrive - and nothing from
+	// before; there is no cursor, so a client that reconnects re-reads whatever it needs
+	// (GetMemories, GetForgottenMemories) rather than replaying. A watcher that falls behind is not
+	// allowed to slow the store down: the events it could not take are dropped and counted, and the
+	// next event it does receive reports how many in dropped. On PostgreSQL and MySQL each instance
+	// publishes only its own changes, so forgetting is seen on the consolidating instance and a write
+	// on the instance that served it.
+	//
+	// On, every change is written to a durable change log in the same transaction, and every
+	// instance reads it - so any instance serves the whole store's feed, each event carries the
+	// log's seq, and a client can RESUME from the last seq it received (WatchRequest.resume). A
+	// watcher that falls behind catches up from the log instead of dropping. The response headers
+	// carry hippocampus-watch-seq, the cursor the stream starts after. A resume whose cursor the log's
+	// caps have since removed is refused with OUT_OF_RANGE, which means re-read and start again.
+	// Events arrive a poll interval after they commit (watch.changeLog.pollIntervalMillis).
 	//
 	// A group-scoped caller sees only items in its groups; a forgotten memory or event is reported
 	// with the group it had. A cycle's completion is store-global counts, as GetConsolidationStatus

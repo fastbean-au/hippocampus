@@ -154,6 +154,7 @@ func ancillaryComponents(storage db.AncillaryStorage) []ancillaryComponent {
 		{"forgotten_log", storage.ForgottenLog},
 		{"search_outbox", storage.SearchOutbox},
 		{"callback_queue", storage.CallbackQueue},
+		{"change_log", storage.ChangeLog},
 	}
 }
 
@@ -266,6 +267,7 @@ func ancillaryToProto(in *ancillarySnapshot) *contract.AncillaryStorage {
 		ForgottenLog:  ancillaryTableToProto(in.storage.ForgottenLog),
 		SearchOutbox:  ancillaryTableToProto(in.storage.SearchOutbox),
 		CallbackQueue: ancillaryTableToProto(in.storage.CallbackQueue),
+		ChangeLog:     ancillaryTableToProto(in.storage.ChangeLog),
 	}
 }
 

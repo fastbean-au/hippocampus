@@ -98,6 +98,8 @@ type telemetry struct {
 	// The Watch RPC's subscribers, and the events offered to one whose buffer was full.
 	watchSubscribers metric.Int64Gauge
 	watchDropped     metric.Int64Counter
+	watchReplayed    metric.Int64Counter
+	watchGapsPassed  metric.Int64Counter
 
 	summarisationCandidates metric.Int64Gauge
 	memoriesSummarised      metric.Int64Counter
@@ -218,6 +220,8 @@ func newTelemetry() *telemetry {
 
 		watchSubscribers: newInt64Gauge(meter, "hippocampus.watch.subscribers", "Watch streams open on this instance."),
 		watchDropped:     newInt64Counter(meter, "hippocampus.watch.dropped", "Watch events dropped because a watcher was not reading fast enough. Each watcher is told how many it missed."),
+		watchReplayed:    newInt64Counter(meter, "hippocampus.watch.replayed", "Change log rows read again for a Watch stream that resumed or fell behind."),
+		watchGapsPassed:  newInt64Counter(meter, "hippocampus.watch.gaps_passed", "Gaps in the change log's sequence the reader stopped waiting on, taken to be rolled-back writes."),
 
 		summarisationCandidates: newInt64Gauge(meter, "hippocampus.summarisation_candidates", "Number of events identified as summarisation candidates by the most recent sleep cycle."),
 		memoriesSummarised:      newInt64Counter(meter, "hippocampus.memories.summarised", "Number of memories replaced by a summary memory (ReplaceMemoriesWithSummary or SummariseMemories)."),

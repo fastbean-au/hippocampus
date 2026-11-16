@@ -703,6 +703,12 @@ export const ANCILLARY_TABLES = [
     note: "One fixed-size row per index deletion still owed. It grows precisely when deletions are backing up.",
   },
   {
+    key: "changeLog",
+    label: "Change log",
+    bound: "watch.changeLog.maxRows / .maxBytes / .maxAgeHours",
+    note: "One row per change a Watch stream carries, so a stream can resume and any instance can serve the whole store. Its age cap is how long a disconnected client can be away and still resume.",
+  },
+  {
     key: "callbackQueue",
     label: "Callback queue",
     bound: "callbacks.maxRows / .maxBytes / .maxAgeHours",

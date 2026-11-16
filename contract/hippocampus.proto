@@ -567,13 +567,24 @@ service Hippocampus {
 	// webhooks, over the connection a client already holds, so a client behind NAT or a broker
 	// bridge can follow the store without running an HTTP receiver the service must reach.
 	//
-	// It is LIVE AND BEST-EFFORT. A watcher sees what this instance commits from the moment it
-	// subscribes - which is when the response headers arrive - and nothing from before; there is no cursor to resume from, so a client that
-	// reconnects re-reads whatever it needs (GetMemories, GetForgottenMemories) rather than
-	// replaying. A watcher that falls behind is not allowed to slow the store down: the events it
-	// could not take are dropped and counted, and the next event it does receive reports how many
-	// in dropped. On PostgreSQL and MySQL each instance publishes only its own changes, so forgetting
-	// is seen on the consolidating instance and a write on the instance that served it.
+	// What it guarantees depends on watch.changeLog.enabled.
+	//
+	// Off (the default), it is LIVE AND BEST-EFFORT. A watcher sees what this instance commits from
+	// the moment it subscribes - which is when the response headers arrive - and nothing from
+	// before; there is no cursor, so a client that reconnects re-reads whatever it needs
+	// (GetMemories, GetForgottenMemories) rather than replaying. A watcher that falls behind is not
+	// allowed to slow the store down: the events it could not take are dropped and counted, and the
+	// next event it does receive reports how many in dropped. On PostgreSQL and MySQL each instance
+	// publishes only its own changes, so forgetting is seen on the consolidating instance and a write
+	// on the instance that served it.
+	//
+	// On, every change is written to a durable change log in the same transaction, and every
+	// instance reads it - so any instance serves the whole store's feed, each event carries the
+	// log's seq, and a client can RESUME from the last seq it received (WatchRequest.resume). A
+	// watcher that falls behind catches up from the log instead of dropping. The response headers
+	// carry hippocampus-watch-seq, the cursor the stream starts after. A resume whose cursor the log's
+	// caps have since removed is refused with OUT_OF_RANGE, which means re-read and start again.
+	// Events arrive a poll interval after they commit (watch.changeLog.pollIntervalMillis).
 	//
 	// A group-scoped caller sees only items in its groups; a forgotten memory or event is reported
 	// with the group it had. A cycle's completion is store-global counts, as GetConsolidationStatus
@@ -1496,6 +1507,14 @@ message WatchRequest {
 	// kinds limits the stream to these kinds. MEMORIES_AT_RISK is refused: it costs a preview scan
 	// per cycle and is a callbacks.* delivery only. Empty carries every other kind.
 	repeated CallbackKind                  kinds                     = 1;
+
+	// resume replays the change log after after_seq before going live, so a client that reconnects
+	// misses nothing. after_seq 0 replays everything the log still holds; any other value must be a
+	// seq the log still holds - the last one the client received, or the hippocampus-watch-seq header
+	// of an earlier stream - or the call fails OUT_OF_RANGE. Refused with FAILED_PRECONDITION when
+	// watch.changeLog.enabled is off. Without resume, after_seq must be 0 and the stream is live.
+	bool                                   resume                    = 2;
+	int64                                  after_seq                 = 3; // the cursor to resume after; see resume
 }
 
 // WatchItem is one memory or event a WatchEvent is about, as it stood when the change committed.
@@ -1521,8 +1540,16 @@ message WatchEvent {
 
 	// dropped is how many events this watcher missed since the previous one it received, because
 	// it was not reading fast enough. Nonzero means the watcher's view has a gap and anything it
-	// mirrors wants re-reading.
+	// mirrors wants re-reading. Always 0 with watch.changeLog.enabled on, where a watcher that falls
+	// behind is caught up from the log instead.
 	int64                                  dropped                   = 7;
+
+	// seq is the change log's sequence number for this change, increasing along the stream: what a
+	// client stores, and passes back as WatchRequest.after_seq to resume. 0 when
+	// watch.changeLog.enabled is off, where there is no log to resume from. Consecutive events need
+	// not have consecutive seqs - other watchers' kinds and groups, and rolled-back writes, take
+	// numbers too.
+	int64                                  seq                       = 8;
 }
 
 // DecayCurveRequest asks for the curve the configured decay algorithm produces for one significance
@@ -1725,7 +1752,7 @@ message GetConsolidationStatusResponse {
 	StorageFootprint                       footprint                 = 9;
 }
 
-// AncillaryTable is what one of the three tables excluded from the capacity target holds.
+// AncillaryTable is what one of the tables excluded from the capacity target holds.
 //
 // For the two fixed-width tables bytes is rows multiplied by a flat per-row allowance, not a
 // measurement - scanning them to add up what their count already says would put a cost on the path
@@ -1815,18 +1842,23 @@ message AncillaryTable {
 // The callback queue is the one to watch. Its rows have no fixed size, so callbacks.maxRows bounds
 // its bytes only loosely, while the other two are fixed-width rows whose row caps are byte caps.
 // callbacks.maxBytes is what bounds it in the same unit the figure is reported in.
+//
+// The change log is a fourth, excluded because it grows with every write: counted, writing would
+// evict. Its rows are variable-width like the callback queue's, and watch.changeLog.maxBytes bounds
+// it the same way.
 message AncillaryStorage {
 	int64                                  measured_at               = 1; // UnixNano the cycle took this measurement
 
 	// total_bytes sums each table's disk_bytes where there is one and its bytes where there is not,
 	// because the question it answers - what disk does this deployment need beyond
 	// consolidation.capacityBytes - is asked of what the engine is holding rather than of what the
-	// rows would occupy if it were compacted. It is therefore not always the sum of the three
+	// rows would occupy if it were compacted. It is therefore not always the sum of the tables'
 	// `bytes` fields, and is usually larger.
 	int64                                  total_bytes               = 2;
 	AncillaryTable                         forgotten_log             = 3; // the forgotten log (consolidation.tombstones.*)
 	AncillaryTable                         search_outbox             = 4; // the OpenSearch delete outbox (opensearch.outbox.*)
 	AncillaryTable                         callback_queue            = 5; // the outbound callback queue (callbacks.*)
+	AncillaryTable                         change_log                = 6; // the durable change log behind a resumable Watch (watch.changeLog.*)
 }
 
 // IndexFootprint is what one index over a counted table really occupies, and how many entries it

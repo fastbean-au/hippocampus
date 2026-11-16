@@ -81,10 +81,12 @@ func adminCommands() map[string]command {
 		},
 		"watch": {
 			summary:   "follow the store's changes as they commit, until interrupted (gRPC only)",
-			hint:      "[--kind K]...",
+			hint:      "[--kind K]... [--resume [--after-seq N]]",
 			streaming: true,
 			flags: func(fs *pflag.FlagSet) {
 				fs.StringSlice("kind", nil, "only this kind (repeatable): memory-stored, memory-updated, memory-forgotten, event-forgotten or sleep-completed")
+				fs.Bool("resume", false, "replay the change log after --after-seq before going live (needs watch.changeLog.enabled)")
+				fs.Int64("after-seq", 0, "with --resume, the last seq received; 0 replays everything the log holds")
 			},
 			run: runWatch,
 		},

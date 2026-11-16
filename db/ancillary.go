@@ -236,10 +236,14 @@ type AncillaryBounds struct {
 
 // AncillaryStorage is the three excluded tables together: the storage this store spends that its
 // capacity target does not count.
+//
+// The change log (changelog.go) arrived as a fourth, and is reported here for the same reason: it
+// is excluded from the target, and its policy is installed on the store as the forgotten log's is.
 type AncillaryStorage struct {
 	ForgottenLog  AncillaryTable
 	SearchOutbox  AncillaryTable
 	CallbackQueue AncillaryTable
+	ChangeLog     AncillaryTable
 }
 
 // TotalBytes is what the capacity target cannot see, all three tables together. It is the figure
@@ -247,7 +251,8 @@ type AncillaryStorage struct {
 // a disk is sized against what the engine is holding, not against what the rows would occupy if it
 // were compacted. It is therefore not always the sum of the three Bytes figures.
 func (a AncillaryStorage) TotalBytes() int64 {
-	return a.ForgottenLog.Footprint() + a.SearchOutbox.Footprint() + a.CallbackQueue.Footprint()
+	return a.ForgottenLog.Footprint() + a.SearchOutbox.Footprint() + a.CallbackQueue.Footprint() +
+		a.ChangeLog.Footprint()
 }
 
 // AncillaryStorage measures the three tables UsedBytes excludes.
@@ -288,9 +293,15 @@ func (d *DB) AncillaryStorage(ctx context.Context, bounds AncillaryBounds) (Anci
 		return AncillaryStorage{}, err
 	}
 
+	changes, err := d.ancillaryTable(ctx, sizes, d.changeLogProbe(), d.changeLog.Bounds())
+	if err != nil {
+		return AncillaryStorage{}, err
+	}
+
 	out.ForgottenLog = forgotten
 	out.SearchOutbox = outbox
 	out.CallbackQueue = callbacks
+	out.ChangeLog = changes
 
 	return out, nil
 }

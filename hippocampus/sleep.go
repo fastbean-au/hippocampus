@@ -94,6 +94,9 @@ func (s *Server) sleep(trigger string) error {
 	// returns the ones consolidation freed.
 	s.pruneTombstones(ctx)
 
+	// The change log's caps, for the same reason.
+	s.pruneChangeLog(ctx)
+
 	// And before it for the same reason. It also runs before the compaction below, which renumbers
 	// whatever is left: reaping first means a level that is about to go is not renumbered on its way
 	// out.
@@ -166,7 +169,7 @@ func (s *Server) sleep(trigger string) error {
 	// a receiver needs to hear as a clean run. Best-effort, and never allowed to fail the cycle.
 	s.queueCycleCallback(ctx, cycleId, report)
 
-	s.watch.publishCycle(cycleId, report)
+	s.announceCycle(ctx, cycleId, report)
 
 	return err
 }

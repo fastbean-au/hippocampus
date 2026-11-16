@@ -1194,7 +1194,8 @@ func runCallbackQueue(ctx context.Context, client contract.HippocampusClient, fs
 }
 
 // runWatch follows the store's changes until interrupted, one event per line. It needs the gRPC
-// transport: the gateway cannot stream, and the HTTP client says so.
+// transport: the gateway cannot stream, and the HTTP client says so. --resume replays the change log
+// after --after-seq first, which the service refuses when it keeps no change log.
 func runWatch(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
 	var kinds []contract.CallbackKind
 
@@ -1207,7 +1208,11 @@ func runWatch(ctx context.Context, client contract.HippocampusClient, fs *pflag.
 		kinds = append(kinds, kind)
 	}
 
-	stream, err := client.Watch(ctx, &contract.WatchRequest{Kinds: kinds})
+	stream, err := client.Watch(ctx, &contract.WatchRequest{
+		Kinds:    kinds,
+		Resume:   b(fs, "resume"),
+		AfterSeq: i64(fs, "after-seq"),
+	})
 	if err != nil {
 		return err
 	}

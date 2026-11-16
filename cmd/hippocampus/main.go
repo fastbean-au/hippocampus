@@ -378,6 +378,7 @@ func setStartupDefaults() {
 	setSearchDefaults()
 	setArchiveDefaults()
 	setCallbackDefaults()
+	setWatchDefaults()
 	setLLMDefaults()
 	setTopologyDefaults()
 
@@ -791,6 +792,7 @@ func configProblems() []error {
 	problems = append(problems, archiveProblems()...)
 	problems = append(problems, searchProblems()...)
 	problems = append(problems, gatewayProblems()...)
+	problems = append(problems, watchProblems()...)
 
 	if err := validateCallbackConfig(); err != nil {
 		problems = append(problems, err)

@@ -63,6 +63,15 @@ by a `repository_dispatch`, so each states for itself which service version it w
 
 ## [Unreleased]
 
+### Added
+
+- **`Watch` can resume, and any instance serves the whole store's changes.** `watch.changeLog.enabled`
+  (off by default) records every change into a change log (schema version 20). Each event then
+  carries a `seq`; `resume` with `after_seq` replays what a client missed, a slow watcher is caught
+  up instead of dropping, and on PostgreSQL or MySQL every instance streams every instance's
+  changes. `hippo watch --resume --after-seq N` and the Python client's `watch(resume=...)` use it.
+  See [the change log](docs/configuration.md#the-change-log).
+
 ## [0.54.1] - 2026-11-17
 
 ### Added

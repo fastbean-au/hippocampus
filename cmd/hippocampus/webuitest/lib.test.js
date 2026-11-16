@@ -1853,14 +1853,15 @@ test("ancillaryRows lists a disabled table rather than omitting it", () => {
     [
       ["Forgotten log", true, 8000, 1536000],
       ["Search outbox", false, 0, 0],
+      ["Change log", false, 0, 0],
       ["Callback queue", true, 1100, 563200],
     ],
   );
 
   // The callback queue is last on purpose: it is the one whose row cap is not a byte cap, so its
-  // note is the parting one rather than one of three equals.
-  assert.match(rows[2].note, /no fixed size/);
-  assert.equal(rows[2].bound, "callbacks.maxRows / .maxBytes / .maxAgeHours");
+  // note is the parting one rather than one of the others' equals.
+  assert.match(rows[3].note, /no fixed size/);
+  assert.equal(rows[3].bound, "callbacks.maxRows / .maxBytes / .maxAgeHours");
 
   assert.equal(rows[0].state, "recording");
   assert.equal(rows[1].state, "not enabled");
@@ -2014,6 +2015,7 @@ test("ancillaryRows carries each table's own cap", () => {
       limitBytes: "4000",
     },
     searchOutbox: { enabled: true, rows: "10", bytes: "1000" },
+    changeLog: { enabled: true, rows: "10", bytes: "500", limitBytes: "1000" },
     callbackQueue: {
       enabled: true,
       rows: "10",
@@ -2024,7 +2026,8 @@ test("ancillaryRows carries each table's own cap", () => {
 
   assert.equal(rows[0].limit, "25% of the 3.91 KiB cap");
   assert.equal(rows[1].limit, "no byte cap");
-  assert.equal(rows[2].limit, "50% of the 1.95 KiB cap");
+  assert.equal(rows[2].limit, "50% of the 1000 B cap");
+  assert.equal(rows[3].limit, "50% of the 1.95 KiB cap");
 });
 
 test("ancillaryRows separates a table nothing records into from one nobody enabled", () => {
@@ -2037,16 +2040,17 @@ test("ancillaryRows separates a table nothing records into from one nobody enabl
   assert.match(rows[0].state, /no longer recording/);
   assert.equal(rows[0].rows, 8000);
   assert.equal(rows[1].state, "not enabled");
-  assert.equal(rows[2].state, "recording");
+  assert.equal(rows[2].state, "not enabled");
+  assert.equal(rows[3].state, "recording");
 });
 
 test("ancillaryRows tolerates a measurement that is missing entirely", () => {
   const rows = ancillaryRows(undefined);
 
-  assert.equal(rows.length, 3);
+  assert.equal(rows.length, 4);
   assert.deepEqual(
     rows.map((r) => r.enabled),
-    [false, false, false],
+    [false, false, false, false],
   );
 });
 
