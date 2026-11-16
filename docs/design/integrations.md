@@ -259,7 +259,7 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
   an event **completes**, judge it against a CEL rules file and either promote it to a central
   instance, promote it after reducing it, or drop it — draining the edge either way. Its own Go
   module (module path `github.com/fastbean-au/hippocampus/integrations/ingestor`; `replace
-github.com/fastbean-au/hippocampus => ../..`), which is what makes `github.com/google/cel-go`
+github.com/fastbean-au/hippocampus => ../..`), which is what makes `cel.dev/cel-go`
   affordable — **the root module does not import it**. A client of two instances, not a service
   feature: the edge is a stock `hippocampus` binary, and the core needed only one additive field
   (`GetMemoriesRequest.event_id`/`has_event`). Five things carry the design. (1) **It holds no
