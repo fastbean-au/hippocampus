@@ -592,13 +592,18 @@ func deriveMariaDB(mysql *dialect) *dialect {
 
 	// Measured on 11.4, where the same schema costs markedly less than on MySQL 8.4: MySQL's figures
 	// over-read MariaDB's real storage by up to 2.1 times, which would hold a store to half its byte
-	// target. The plain row came in at 584 bytes for a 175-byte body and 777 for a 1,135-byte one,
-	// and 680 sits both inside TestRowOverheadMatchesRealStorage's band. The content index fits 500
-	// bytes a row plus 1.776 per indexed byte to within 4% across all four indexed cases. The
-	// ancillary rows (tombstones, outbox) measured within 4% of MySQL's and keep its figures.
-	mariaDB.memoryRowOverheadBytes = 680
-	mariaDB.rowOverheadBytes = 680
-	mariaDB.contentIndexRowOverheadBytes = 500
+	// target. The plain row came in at 584 bytes for a 175-byte body and 777 for a 1,135-byte one on
+	// a podman host, and at 481 for the short body on CI's runner. That last gap is exactly 1 MiB
+	// of tablespace file: InnoDB extends a file in fixed steps, and a store this small sits near a
+	// step, so the short-body figure is only good to about a step either way. 520 keeps every one
+	// of those readings inside TestRowOverheadMatchesRealStorage's band. The content index fits 660
+	// bytes a row plus 1.776 per indexed byte on top of it, to within 4% across all four indexed
+	// cases - its row term carries what the plain row gave up, so an indexed store's estimate is
+	// the one that was fitted. The ancillary rows (tombstones, outbox) measured within 4% of
+	// MySQL's and keep its figures.
+	mariaDB.memoryRowOverheadBytes = 520
+	mariaDB.rowOverheadBytes = 520
+	mariaDB.contentIndexRowOverheadBytes = 660
 	mariaDB.contentIndexPayloadPerMille = 1776
 
 	return &mariaDB
