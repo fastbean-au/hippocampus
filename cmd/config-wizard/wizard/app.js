@@ -410,7 +410,7 @@ const STEPS = [
       {
         title: "Store",
         blurb:
-          "SQLite is embedded — one file, one instance, nothing to run alongside. PostgreSQL and MySQL let several instances share one store, of which exactly one may consolidate. The driver also decides what search you get: see the note under it.",
+          "SQLite is embedded — one file, one instance, nothing to run alongside. PostgreSQL and MySQL (or MariaDB, through the same driver) let several instances share one store, of which exactly one may consolidate. The driver also decides what search you get: see the note under it.",
         fields: [
           {
             key: "storage.driver",
@@ -422,9 +422,9 @@ const STEPS = [
             options: [
               ["sqlite", "sqlite — embedded, single instance"],
               ["postgres", "postgres — shared, horizontally scalable"],
-              ["mysql", "mysql — shared, 8.0.20 or newer"],
+              ["mysql", "mysql — shared, MySQL 8.0.20+ or MariaDB 10.11+"],
             ],
-            help: "Search differs by driver, and it is worth knowing before you commit. SQLite has keyword content search built in — no cluster, no configuration. PostgreSQL and MySQL have none of their own, so they need OpenSearch for any content search at all. Semantic (meaning-based) search needs OpenSearch on every driver, so an embedded deployment trades it away for having nothing to run alongside.",
+            help: "Search differs by backend, and it is worth knowing before you commit. Every driver has keyword content search built in — no cluster, no configuration. OpenSearch adds relevance ranking and, with an embedder, semantic (meaning-based) search, which no driver has on its own, so an embedded deployment trades it away for having nothing to run alongside. The mysql driver detects a MariaDB server by itself; there is nothing to choose.",
           },
           {
             key: "storage.directory",
@@ -448,7 +448,7 @@ const STEPS = [
           },
           {
             key: "storage.mysql.dsn",
-            label: "MySQL DSN",
+            label: "MySQL / MariaDB DSN",
             type: "text",
             def: "",
             secret: true,

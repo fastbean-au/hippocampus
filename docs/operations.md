@@ -409,7 +409,9 @@ through whatever the cluster already uses. See [`deploy/k8s/README.md`](../deplo
 ## Choosing a storage driver
 
 Set `storage.driver` to `sqlite` (default), `postgres`, or `mysql`. All three are pure Go, so the
-binary is statically linked with CGO disabled.
+binary is statically linked with CGO disabled. The `mysql` driver serves MariaDB 10.11+ as well,
+detected at startup, and the MySQL column below applies to it, except that MariaDB stores the
+same rows in roughly a third less space.
 
 |                                    | SQLite                        | Postgres                        | MySQL (8.0.20+)             |
 | ---------------------------------- | ----------------------------- | ------------------------------- | --------------------------- |

@@ -62,6 +62,11 @@ type DB struct {
 	sql    *sql.DB
 	driver driver
 
+	// mariaDB is set when the mysql driver's server turned out to be MariaDB, which selects the
+	// MariaDB dialect row in place of MySQL's (see mariaDBDialect). Set once by detectMariaDB, before
+	// any other statement, and never changed.
+	mariaDB bool
+
 	// walFilePath is the on-disk WAL file's path, empty for the server drivers and for the
 	// in-memory database used by tests (neither has one). Set once in New and never changed.
 	walFilePath string
@@ -1337,6 +1342,14 @@ func (d *DB) Preserve(ctx context.Context) error {
 // fails. It is deliberately cheap - a driver-level round trip, not a query.
 func (d *DB) Ping(ctx context.Context) error {
 	return d.sql.PingContext(ctx)
+}
+
+// EngineName reports the database engine's display name ("PostgreSQL", "MariaDB"). It names the
+// engine rather than the driver, which differ for a MariaDB store: the mysql driver serves it. Not
+// part of the Store interface, for the reason ServerVersion is not.
+func (d *DB) EngineName() string {
+
+	return d.dialect().engineName
 }
 
 // ServerVersion reports the database engine's name and version ("PostgreSQL 16.4", "SQLite

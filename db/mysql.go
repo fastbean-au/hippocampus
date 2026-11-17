@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	log "github.com/sirupsen/logrus"
@@ -17,7 +18,8 @@ import (
 // instance opens read/write but never consolidates, so it can run alongside the one consolidating
 // instance as a horizontally scaled replica. Exactly one instance in a deployment must
 // be started with consolidate true. Requires MySQL 8.0.20+ (the upserts use the ON DUPLICATE KEY
-// UPDATE row alias) and a DSN that names a database schema.
+// UPDATE row alias) or MariaDB 10.11+ (detected; see detectMariaDB), and a DSN that names a
+// database schema.
 func NewMySQL(dsn string, consolidate bool, opts ...Option) (*DB, error) {
 	log.Trace("func() NewMySQL")
 
@@ -69,6 +71,12 @@ func setupMySQL(sqlDB *sql.DB, consolidate bool, opts ...Option) (*DB, error) {
 	sqlDB.SetConnMaxLifetime(serverConnMaxLifetime)
 
 	d := &DB{sql: sqlDB, driver: driverMySQL}
+
+	if err := d.detectMariaDB(); err != nil {
+		_ = sqlDB.Close()
+
+		return nil, err
+	}
 
 	applyOptions(d, opts)
 
@@ -122,6 +130,12 @@ func NewMySQLReadOnly(dsn string) (*DB, error) {
 func setupMySQLReadOnly(sqlDB *sql.DB) (*DB, error) {
 	d := &DB{sql: sqlDB, driver: driverMySQL}
 
+	if err := d.detectMariaDB(); err != nil {
+		_ = sqlDB.Close()
+
+		return nil, err
+	}
+
 	if err := d.checkReadOnlyTables(); err != nil {
 		_ = sqlDB.Close()
 		log.Errorf("failed to open mysql database read-only: %s", err.Error())
@@ -130,6 +144,27 @@ func setupMySQLReadOnly(sqlDB *sql.DB) (*DB, error) {
 	}
 
 	return d, nil
+}
+
+// detectMariaDB asks the server what it is and selects the MariaDB dialect when it says MariaDB.
+// Asked rather than configured, because the same DSN reaches either server and a setting could only
+// be wrong: a MariaDB told it was MySQL fails on its first upsert, and a MySQL told it was MariaDB
+// runs on a spelling MySQL has deprecated. Every MariaDB build puts its name in VERSION()
+// ("11.4.13-MariaDB-ubu2404"); MySQL's never does.
+func (d *DB) detectMariaDB() error {
+	log.Trace("func() db.detectMariaDB")
+
+	var version string
+
+	if err := d.sql.QueryRow(`SELECT VERSION()`).Scan(&version); err != nil {
+		log.Errorf("failed to read the mysql server version: %s", err.Error())
+
+		return fmt.Errorf("reading the server version: %w", err)
+	}
+
+	d.mariaDB = strings.Contains(version, "MariaDB")
+
+	return nil
 }
 
 // acquireMySQLInstanceLock takes the instance lock on a dedicated connection pinned for the life

@@ -53,6 +53,24 @@ jobs:
           --health-timeout 3s
           --health-retries 24
 
+      # The floor rather than the newest: MariaDB is served by the mysql driver, and the older
+      # server is the one that lacks what a newer one quietly accepts (11.4.5 began aliasing
+      # MySQL's utf8mb4_0900_ai_ci collation, for one). Exercised by the dialect step below only.
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_USER: hippocampus
+          MARIADB_PASSWORD: hippocampus
+          MARIADB_DATABASE: hippocampus_test
+          MARIADB_ROOT_PASSWORD: hippocampus
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 24
+
       opensearch:
         image: opensearchproject/opensearch:3.1.0
         env:
@@ -128,6 +146,19 @@ jobs:
             echo "::endgroup::"
           done
 
+          # MariaDB is the mysql dialect pointed at a MariaDB server; the driver detects it. The
+          # storage measurements run here too, because the conformance run skips them and they are
+          # what holds MariaDB's own row allowances to its real disk.
+          echo "::group::db and service suites on mariadb"
+          HIPPOCAMPUS_TEST_DIALECT=mysql \
+            HIPPOCAMPUS_TEST_MYSQL_DSN='hippocampus:hippocampus@tcp(localhost:3307)/hippocampus_test' \
+            HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN='root:hippocampus@tcp(localhost:3307)/hippocampus_test' \
+            go test -count=1 -coverprofile=coverage-mariadb.out ./db ./hippocampus
+          HIPPOCAMPUS_TEST_MYSQL_DSN='hippocampus:hippocampus@tcp(localhost:3307)/hippocampus_test' \
+            HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN='root:hippocampus@tcp(localhost:3307)/hippocampus_test' \
+            go test -count=1 -run 'TestRowOverheadMatchesRealStorage/mysql|TestAncillaryAllowancesMatchRealStorage/mysql' ./db
+          echo "::endgroup::"
+
       # Coverage is reported to Coveralls only on a push to main, never on a PR: fork PRs cannot see
       # the token secret, and PR coverage must not overwrite the mainline badge. This is what keeps
       # the README's ?branch=main badge fresh - the tag-triggered release runs report under the tag
@@ -146,11 +177,11 @@ jobs:
           # Repository secret; goveralls reads it via -service=github. Never inline the token.
           COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
         run: |
-          for profile in coverage coverage-postgres coverage-mysql; do
+          for profile in coverage coverage-postgres coverage-mysql coverage-mariadb; do
             grep -vE '/contract/hippocampus[^/]*\.go:|/db/dbtest/|/internal/flagdocs/|/examples/go/quickstart/' "$profile.out" > "$profile.filtered.out"
           done
           go install github.com/mattn/goveralls@latest
-          goveralls -coverprofile=coverage.filtered.out,coverage-postgres.filtered.out,coverage-mysql.filtered.out -service=github
+          goveralls -coverprofile=coverage.filtered.out,coverage-postgres.filtered.out,coverage-mysql.filtered.out,coverage-mariadb.filtered.out -service=github
 
   # The root module under the race detector. Its own job rather than a flag on the test job, for two
   # reasons. The run takes several minutes - the db package alone is over four under -race - which

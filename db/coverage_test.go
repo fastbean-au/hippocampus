@@ -37,7 +37,21 @@ func TestServerVersion(t *testing.T) {
 		t.Fatalf("ServerVersion on a live database: %s", err)
 	}
 
-	engine := map[string]string{"sqlite": "SQLite ", "postgres": "PostgreSQL ", "mysql": "MySQL "}[db.dialect().name]
+	// Keyed by the dialect rather than the engine's own name, so a dialect missing from it fails
+	// rather than expecting an empty prefix every version has.
+	engine, ok := map[string]string{
+		"sqlite":   "SQLite ",
+		"postgres": "PostgreSQL ",
+		"mysql":    "MySQL ",
+		"mariadb":  "MariaDB ",
+	}[db.dialect().name]
+	if !ok {
+		t.Fatalf("no expected prefix for the %s dialect", db.dialect().name)
+	}
+
+	if db.EngineName()+" " != engine {
+		t.Errorf("EngineName = %q, want the version's prefix %q", db.EngineName(), engine)
+	}
 
 	if !strings.HasPrefix(version, engine) || len(version) <= len(engine) {
 		t.Errorf("expected a version beginning %q followed by a number, got %q", engine, version)

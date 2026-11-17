@@ -1228,6 +1228,45 @@ func TestStoreNodeNamesTheServerDialects(t *testing.T) {
 	}
 }
 
+// engineNamedStore is a store reporting the engine it found, which is all storeNodeSpec asks of it.
+type engineNamedStore struct {
+	db.Store
+
+	engine string
+}
+
+func (s engineNamedStore) EngineName() string {
+
+	return s.engine
+}
+
+// TestStoreNodeNamesTheEngineNotTheDriver covers a MariaDB store, which the mysql driver serves.
+// Named from the configured driver, its card read "MySQL" above a version of "MariaDB 11.4.13".
+func TestStoreNodeNamesTheEngineNotTheDriver(t *testing.T) {
+	t.Parallel()
+
+	spec := (&Server{db: engineNamedStore{engine: "MariaDB"}}).storeNodeSpec(Deployment{
+		StorageDriver: "mysql",
+		StorageDSN:    "hippo:sup3rs3cret@tcp(db.internal:3306)/hippocampus",
+	})
+
+	if spec.name != "MariaDB" {
+		t.Errorf("name = %q, want MariaDB", spec.name)
+	}
+
+	// The driver attribute is the configuration, which is still mysql.
+	for _, attribute := range spec.attributes {
+		if attribute.key == "driver" && attribute.value != "mysql" {
+			t.Errorf("the driver attribute is %q, want the configured \"mysql\"", attribute.value)
+		}
+	}
+
+	// A store with nothing to say keeps the driver's name.
+	if spec := (&Server{db: engineNamedStore{}}).storeNodeSpec(Deployment{StorageDriver: "mysql"}); spec.name != "MySQL" {
+		t.Errorf("name = %q for a store reporting no engine, want MySQL", spec.name)
+	}
+}
+
 // TestProviderDisplayName covers the two named providers and the pass-through. The pass-through is
 // the one worth pinning: configProblems refuses an unrecognised provider at startup, so anything
 // reaching here skipped validation, and showing what is actually configured beats a default that

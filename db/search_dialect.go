@@ -240,10 +240,17 @@ func (d *DB) writeContentIndexEntry(ctx context.Context, id string, body string)
 		// The row alias the other upsert paths use is a syntax error with INSERT ... SELECT, so the
 		// alias goes on a derived table instead - which is what MySQL's own manual offers in its
 		// place, and the only reason this statement is shaped differently from the one above it.
+		// MariaDB has neither alias and names the proposed row VALUES(body), which INSERT ... SELECT
+		// accepts there.
+		update := `new.body`
+		if d.dialect().upsertValuesFunc {
+			update = `VALUES(body)`
+		}
+
 		_, err := d.exec(ctx,
 			`INSERT INTO `+contentSearchTable+` (memory_id, body)
 			SELECT * FROM (SELECT m.id AS memory_id, ? AS body FROM memories m WHERE m.id = ?) AS new
-			ON DUPLICATE KEY UPDATE body = new.body`,
+			ON DUPLICATE KEY UPDATE body = `+update,
 			body,
 			id,
 		)

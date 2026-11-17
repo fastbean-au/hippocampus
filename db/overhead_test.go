@@ -418,9 +418,15 @@ func mysqlTablespaceBytes(t *testing.T, database *DB, tables []string) int64 {
 
 	defer func() { _ = admin.Close() }()
 
+	// MariaDB kept the view's pre-8.0 name; its name and file_size columns are the same.
+	view := "innodb_tablespaces"
+	if database.dialect().name == "mariadb" {
+		view = "innodb_sys_tablespaces"
+	}
+
 	rows, err := admin.Query(`
 		SELECT SUBSTRING_INDEX(name, '/', -1), file_size
-		FROM information_schema.innodb_tablespaces
+		FROM information_schema.` + view + `
 		WHERE name LIKE CONCAT(DATABASE(), '/%')`)
 	if err != nil {
 		t.Fatalf("reading the tablespace sizes: %s", err)

@@ -109,9 +109,18 @@ case-/accent-insensitive server default, which would collide ids differing only 
 `setMySQLColumnCollationIfNeeded` migrates a pre-existing database in place via an
 `information_schema.columns` `COLLATION_NAME` probe), and the schema init probes
 `information_schema` for index/column existence (no `CREATE INDEX IF NOT EXISTS`/`ADD COLUMN
-IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_test.go` skip
-unless `HIPPOCAMPUS_TEST_POSTGRES_DSN`/`HIPPOCAMPUS_TEST_MYSQL_DSN` point at a disposable
-database. A covering index over the memories consolidation columns lets the sleep-cycle scans
+IF NOT EXISTS`). MariaDB (10.11+) is not a fourth driver but a derived row of the MySQL dialect
+(`mariaDBDialect`), picked by `detectMariaDB` from `VERSION()` at every open, because the same DSN
+reaches either server and a configured choice could only be wrong. The row differs in three
+respects and no others: upserts spell the proposed row `VALUES(column)` (MariaDB never took up
+the `AS new` alias), the catalogue reads need no `information_schema_stats_expiry` session (MariaDB
+has no statistics cache to expire), and its own measured row allowances (MySQL's over-read
+MariaDB's storage by up to 2.1x). `TestMariaDBDialectDiffersOnlyWhereItMust` holds it to that
+list. Its JSON column is a `LONGTEXT` holding the client's bytes, so metadata measures as sent
+rather than in a canonical re-rendering. Postgres/MySQL integration tests in
+`postgres_test.go`/`mysql_test.go` skip unless
+`HIPPOCAMPUS_TEST_POSTGRES_DSN`/`HIPPOCAMPUS_TEST_MYSQL_DSN` point at a disposable database. A
+covering index over the memories consolidation columns lets the sleep-cycle scans
 avoid ever reading memory bodies. The `db.Server` interface (implemented by
 `hippocampus.Server`) inverts the dependency so the DB's consolidation scans can ask the server
 whether to delete a row. `initSchema` also runs `addColumnIfMissing` for columns added after a

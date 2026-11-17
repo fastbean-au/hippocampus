@@ -688,7 +688,15 @@ func openForInspection(driverName string, target string) (*DB, error) {
 			return nil, err
 		}
 
-		return &DB{sql: sqlDB, driver: driverMySQL, readOnly: true}, nil
+		d := &DB{sql: sqlDB, driver: driverMySQL, readOnly: true}
+
+		if err := d.detectMariaDB(); err != nil {
+			_ = sqlDB.Close()
+
+			return nil, err
+		}
+
+		return d, nil
 
 	}
 

@@ -1137,8 +1137,23 @@ func TestSetupPostgresReadOnlyMissingTables(t *testing.T) {
 
 // --- setupMySQL / setupMySQLReadOnly ---
 
+// mysqlServerVersion and mariaDBServerVersion are what each server's VERSION() answers, verbatim
+// from a mysql:8.4 and a mariadb:11.4 container.
+const (
+	mysqlServerVersion   = "8.4.6"
+	mariaDBServerVersion = "11.4.13-MariaDB-ubu2404"
+)
+
+// expectMySQLServer scripts detectMariaDB, the first statement every mysql-driver open runs.
+func expectMySQLServer(mock sqlmock.Sqlmock, version string) {
+	mock.ExpectQuery(`SELECT VERSION\(\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"VERSION()"}).AddRow(version))
+}
+
 func TestSetupMySQLConsolidator(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
+
+	expectMySQLServer(mock, mysqlServerVersion)
 
 	mock.ExpectQuery(`GET_LOCK`).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(int64(1)))
@@ -1164,6 +1179,8 @@ func TestSetupMySQLConsolidator(t *testing.T) {
 func TestSetupMySQLReplica(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
 
+	expectMySQLServer(mock, mysqlServerVersion)
+
 	expectMySQLSchemaInitFresh(t, mock)
 	expectPoolClose(mock, driverMySQL)
 
@@ -1186,6 +1203,8 @@ func TestSetupMySQLReplica(t *testing.T) {
 func TestSetupMySQLLockContended(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
 
+	expectMySQLServer(mock, mysqlServerVersion)
+
 	mock.ExpectQuery(`GET_LOCK`).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(int64(0)))
 	mock.ExpectClose()
@@ -1199,6 +1218,8 @@ func TestSetupMySQLLockContended(t *testing.T) {
 
 func TestSetupMySQLReadOnly(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
+
+	expectMySQLServer(mock, mysqlServerVersion)
 
 	mock.ExpectQuery(`FROM events WHERE 1 = 0`).WillReturnRows(sqlmock.NewRows([]string{"1"}))
 	mock.ExpectQuery(`FROM memories WHERE 1 = 0`).WillReturnRows(sqlmock.NewRows([]string{"1"}))
@@ -1238,11 +1259,75 @@ func TestSetupPostgresSchemaInitFailsReleasesLock(t *testing.T) {
 func TestSetupMySQLReadOnlyMissingTables(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
 
+	expectMySQLServer(mock, mysqlServerVersion)
+
 	mock.ExpectQuery(`FROM events WHERE 1 = 0`).WillReturnError(errors.New("no such table"))
 	mock.ExpectClose()
 
 	if _, err := setupMySQLReadOnly(d.sql); err == nil {
 		t.Fatal("expected an error when tables are missing")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// TestSetupMySQLDetectsMariaDB covers the one decision the mysql driver makes about its server: a
+// MariaDB is opened on the MariaDB row, and a MySQL stays on MySQL's.
+func TestSetupMySQLDetectsMariaDB(t *testing.T) {
+	tests := []struct {
+		version string
+		want    string
+	}{
+		{mysqlServerVersion, "mysql"},
+		{mariaDBServerVersion, "mariadb"},
+		{"10.11.6-MariaDB-0+deb12u1-log", "mariadb"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.version, func(t *testing.T) {
+			d, mock := newMockDB(t, driverMySQL)
+
+			expectMySQLServer(mock, tc.version)
+			mock.ExpectQuery(`FROM events WHERE 1 = 0`).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+			mock.ExpectQuery(`FROM memories WHERE 1 = 0`).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+
+			got, err := setupMySQLReadOnly(d.sql)
+			if err != nil {
+				t.Fatalf("setupMySQLReadOnly: %v", err)
+			}
+
+			if got.dialect().name != tc.want {
+				t.Errorf("a server reporting %q opened on dialect %q, want %q", tc.version, got.dialect().name, tc.want)
+			}
+
+			expectationsMet(t, mock)
+		})
+	}
+}
+
+// TestSetupMySQLVersionUnreadable covers a server that cannot say what it is: the open fails and
+// closes the handle, rather than guessing a dialect and failing later on its first upsert.
+func TestSetupMySQLVersionUnreadable(t *testing.T) {
+	for _, consolidate := range []bool{true, false} {
+		d, mock := newMockDB(t, driverMySQL)
+
+		mock.ExpectQuery(`SELECT VERSION\(\)`).WillReturnError(errors.New("down"))
+		mock.ExpectClose()
+
+		if _, err := setupMySQL(d.sql, consolidate); err == nil {
+			t.Fatalf("expected setupMySQL (consolidate %t) to fail when the version cannot be read", consolidate)
+		}
+
+		expectationsMet(t, mock)
+	}
+
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectQuery(`SELECT VERSION\(\)`).WillReturnError(errors.New("down"))
+	mock.ExpectClose()
+
+	if _, err := setupMySQLReadOnly(d.sql); err == nil {
+		t.Fatal("expected setupMySQLReadOnly to fail when the version cannot be read")
 	}
 
 	expectationsMet(t, mock)
@@ -1828,6 +1913,8 @@ func TestCompactSignificanceLevels_FinalFlipExecError(t *testing.T) {
 
 func TestSetupMySQL_SchemaInitFailsReleasesLock(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
+
+	expectMySQLServer(mock, mysqlServerVersion)
 
 	mock.ExpectQuery(`GET_LOCK`).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(int64(1)))

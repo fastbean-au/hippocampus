@@ -9,7 +9,10 @@ repo's two documented deployment models (see [`docs/use-cases.md`](../../docs/us
 | ------------------- | ------------------------------ | ------------------------------------ | ------------------------- |
 | `overlays/sqlite`   | Embedded / instance-per-tenant | one `StatefulSet` (1 replica)        | a `PersistentVolumeClaim` |
 | `overlays/postgres` | Centralised / horizontal scale | consolidator + replica `Deployment`s | shared PostgreSQL         |
-| `overlays/mysql`    | Centralised / horizontal scale | consolidator + replica `Deployment`s | shared MySQL (8.0.20+)    |
+| `overlays/mysql`    | Centralised / horizontal scale | consolidator + replica `Deployment`s | shared MySQL (8.0.20+)¹   |
+
+¹ The overlay bundles `mysql:8.4`. The same driver serves MariaDB 10.11+ (detected at startup),
+so a managed MariaDB works as described [below](#using-an-external-managed-database).
 
 All three build on `base/`: the namespace, a token-less `ServiceAccount`, the client-facing
 `Service`, and a default-deny `NetworkPolicy` with the allowances the service needs (see
@@ -135,7 +138,7 @@ For production, drop the bundled demo Postgres: delete the `postgres.yaml` line 
 `overlays/postgres/kustomization.yaml`, and point `HIPPOCAMPUS_STORAGE_POSTGRES_DSN` at your managed
 instance (edit the DSN in the two deployments, or override it from your own Secret). MySQL works the
 same way — set `storage.driver: mysql` and `storage.mysql.dsn` (`HIPPOCAMPUS_STORAGE_MYSQL_DSN`);
-requires MySQL 8.0.20+.
+requires MySQL 8.0.20+ or MariaDB 10.11+, which the driver tells apart by itself.
 
 ### Upgrading the bundled Postgres across a major version
 

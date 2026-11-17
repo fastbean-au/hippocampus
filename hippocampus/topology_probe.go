@@ -399,6 +399,12 @@ type storeVersioner interface {
 	ServerVersion(ctx context.Context) (string, error)
 }
 
+// storeEngineNamer is what the concrete store implements to name the engine it found, which is not
+// always the configured driver's. Asserted for, like storeVersioner.
+type storeEngineNamer interface {
+	EngineName() string
+}
+
 // probeStore pings the primary store and, when asked, reads the engine's version. It is not a
 // pingerProbe because the store's version method is named for what it reports - ServerVersion - so
 // that it cannot be mistaken for the store's SCHEMA version, which is a different number entirely.

@@ -223,7 +223,7 @@ the service's own key reads, so a key cannot be added without a row; regenerate 
 | `storage.indexRebuild.enabled` | `false` | Rebuild bloated indexes | [Storage](#storage) |
 | `storage.indexRebuild.maxBytesPerEntry` | `512` | Rebuild past (bytes per entry) | [Storage](#storage) |
 | `storage.indexRebuild.minBytes` | `16777216` | Smallest index to rebuild (bytes) | [Storage](#storage) |
-| `storage.mysql.dsn` | — | MySQL DSN | [Storage](#storage) |
+| `storage.mysql.dsn` | — | MySQL / MariaDB DSN | [Storage](#storage) |
 | `storage.pool.maxIdleConns` | — | Max idle connections | [Storage](#storage) |
 | `storage.pool.maxOpenConns` | `25` | Max open connections | [Storage](#storage) |
 | `storage.postgres.dsn` | — | PostgreSQL DSN | [Storage](#storage) |
@@ -1521,8 +1521,8 @@ The service logs a warning at startup when the two are combined.
 `storage.driver` selects the storage backend. The default, `sqlite`, is the embedded,
 zero-dependency database every prior release used, stored in `storage.directory`. Setting it to
 `postgres` stores everything in the PostgreSQL database named by `storage.postgres.dsn` instead,
-and `mysql` in the MySQL database named by `storage.mysql.dsn` (go-sql-driver format, e.g.
-`user:password@tcp(host:3306)/dbname`; the DSN must name a database schema):
+and `mysql` in the MySQL or MariaDB database named by `storage.mysql.dsn` (go-sql-driver format,
+e.g. `user:password@tcp(host:3306)/dbname`; the DSN must name a database schema):
 
 ```json
 "storage": {
@@ -1813,6 +1813,11 @@ alias). One MySQL-specific bound: ids are `VARCHAR(255)` there (MySQL cannot ind
 `TEXT` column), so client-supplied event and memory ids longer than 255 characters are rejected
 by that driver; generated UUID ids are unaffected. A `clientFoundRows=true` in the DSN is
 overridden, with a warning, because the store counts rows changed rather than rows matched.
+
+The `mysql` driver also serves **MariaDB 10.11 or later**, with the same `storage.mysql.dsn`. There
+is nothing to configure: the driver asks the server for its version at startup and uses the MariaDB
+dialect when the answer names MariaDB, and the startup line says which it chose (`database schema
+at version N (mariadb)`). Everything above applies unchanged, including the 255-character id bound.
 
 Exactly one instance may run consolidation against a given store. With SQLite that is one instance
 full stop — the embedded database cannot be shared between processes, and a second one pointed at

@@ -184,12 +184,12 @@ flowchart LR
 
 ### Centralised / corporate (Postgres or MySQL, optional OpenSearch)
 
-A server-backed deployment: `storage.driver: postgres` or `mysql`, typically behind TLS with
-authentication, exposing both gRPC and the HTTP/JSON gateway for clients that would rather not speak
-gRPC. Add the optional OpenSearch secondary index (`opensearch.enabled`) for content search over
-memory bodies (`SearchMemories`) — the primary store stays authoritative and the index is
-best-effort and rebuildable. See the [Operations guide](operations.md) for driver selection and
-sizing (notably the MySQL InnoDB buffer-pool note).
+A server-backed deployment: `storage.driver: postgres` or `mysql` (which serves MariaDB too),
+typically behind TLS with authentication, exposing both gRPC and the HTTP/JSON gateway for clients
+that would rather not speak gRPC. Add the optional OpenSearch secondary index (`opensearch.enabled`)
+for content search over memory bodies (`SearchMemories`) — the primary store stays authoritative and
+the index is best-effort and rebuildable. See the [Operations guide](operations.md) for driver
+selection and sizing (notably the MySQL InnoDB buffer-pool note).
 
 One instance runs consolidation (`consolidation.enabled: true`, the single owner of Sleep and
 eviction); any number of stateless read/write replicas (`consolidation.enabled: false`) share the

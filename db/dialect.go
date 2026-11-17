@@ -38,6 +38,10 @@ type dialect struct {
 	// name is the dialect's name for logs and test failures.
 	name string
 
+	// engineName is the database engine's name as an operator would write it, for display: the
+	// store's card in the deployment view. Not name, which is the dialect's identifier.
+	engineName string
+
 	// --- Placeholders --------------------------------------------------------------------------
 
 	// numberedPlaceholders is set for a dialect wanting $1, $2 ... rather than the package's shared
@@ -135,6 +139,12 @@ type dialect struct {
 	// clause. Empty means the dialect wants MySQL's ON DUPLICATE KEY UPDATE form instead of the
 	// standard ON CONFLICT one; see upsert.
 	upsertExcluded string
+
+	// upsertValuesFunc is set for a duplicate-key dialect that refers to the proposed row as
+	// VALUES(column) rather than through a row alias the statement declares. MariaDB has only that
+	// spelling; MySQL deprecated it in 8.0.20 in favour of the alias. Meaningless where
+	// upsertExcluded is set.
+	upsertValuesFunc bool
 
 	// indexIfNotExists is set for a dialect supporting CREATE INDEX IF NOT EXISTS and DROP INDEX IF
 	// EXISTS. Where it is not, existence has to be probed first.
@@ -319,6 +329,7 @@ var dialects = map[driver]*dialect{
 
 	driverSQLite: {
 		name:                 "sqlite",
+		engineName:           "SQLite",
 		numberedPlaceholders: false,
 		idType:               "TEXT",
 		labelType:            "TEXT",
@@ -377,6 +388,7 @@ var dialects = map[driver]*dialect{
 
 	driverPostgres: {
 		name:                 "postgres",
+		engineName:           "PostgreSQL",
 		numberedPlaceholders: true,
 		idType:               "TEXT",
 		labelType:            "TEXT",
@@ -451,6 +463,7 @@ var dialects = map[driver]*dialect{
 
 	driverMySQL: {
 		name:                 "mysql",
+		engineName:           "MySQL",
 		numberedPlaceholders: false,
 		idType:               "VARCHAR(255) COLLATE " + mysqlBinaryCollation,
 		labelType:            "VARCHAR(255)",
@@ -547,10 +560,59 @@ var dialects = map[driver]*dialect{
 	},
 }
 
+// mariaDBDialect is MariaDB's row. It is not a fourth entry in the table above because MariaDB is
+// not a fourth driver: it speaks MySQL's wire protocol through the same go-sql-driver DSN, so the
+// mysql driver opens it and detectMariaDB picks this row once the server has said what it is. Every
+// structural branch on driverMySQL - the GET_LOCK registry lock, the information_schema probes, the
+// DROP INDEX naming its table - holds for MariaDB unchanged, which is why the row is derived from
+// MySQL's rather than written out: what is listed here is the whole of the difference, and a new
+// MySQL field cannot be forgotten on this side.
+var mariaDBDialect = deriveMariaDB(dialects[driverMySQL])
+
+// deriveMariaDB returns a copy of the MySQL row with MariaDB's differences applied.
+func deriveMariaDB(mysql *dialect) *dialect {
+	mariaDB := *mysql
+
+	mariaDB.name = "mariadb"
+	mariaDB.engineName = "MariaDB"
+
+	// MariaDB never took up the INSERT ... AS alias, MySQL 8.0.19's replacement for VALUES(); it is a
+	// syntax error there, and VALUES(column) is the only way to name the proposed row.
+	mariaDB.upsertValuesFunc = true
+
+	// MariaDB has no information_schema_stats_expiry, because it has no statistics cache for the
+	// variable to expire: information_schema.TABLES asks InnoDB on every read. Setting it is an
+	// unknown-variable error, and with nothing to set the catalogue reads through the pool.
+	mariaDB.catalogueSession = ""
+	mariaDB.catalogueSessionReset = ""
+
+	// VERSION() carries the build's suffix ("11.4.13-MariaDB-ubu2404"), whose first part already
+	// names the server; only the number is wanted beside the name.
+	mariaDB.versionQuery = `SELECT CONCAT('MariaDB ', SUBSTRING_INDEX(VERSION(), '-', 1))`
+
+	// Measured on 11.4, where the same schema costs markedly less than on MySQL 8.4: MySQL's figures
+	// over-read MariaDB's real storage by up to 2.1 times, which would hold a store to half its byte
+	// target. The plain row came in at 584 bytes for a 175-byte body and 777 for a 1,135-byte one,
+	// and 680 sits both inside TestRowOverheadMatchesRealStorage's band. The content index fits 500
+	// bytes a row plus 1.776 per indexed byte to within 4% across all four indexed cases. The
+	// ancillary rows (tombstones, outbox) measured within 4% of MySQL's and keep its figures.
+	mariaDB.memoryRowOverheadBytes = 680
+	mariaDB.rowOverheadBytes = 680
+	mariaDB.contentIndexRowOverheadBytes = 500
+	mariaDB.contentIndexPayloadPerMille = 1776
+
+	return &mariaDB
+}
+
 // dialect returns the active dialect's description. The driver field is set once at construction
 // and never changes, so this needs no lock and cannot fail: an unknown driver value would be a
 // programming error in a constructor, not a runtime condition, and is reported as one.
 func (d *DB) dialect() *dialect {
+	if d.mariaDB {
+
+		return mariaDBDialect
+	}
+
 	dialect, ok := dialects[d.driver]
 	if !ok {
 		log.Panicf("no dialect registered for driver %d - a constructor set an unknown driver", d.driver)
@@ -684,7 +746,8 @@ type upsertSpec struct {
 // The two forms differ in more than spelling. The standard one names the conflicting key explicitly
 // and refers to the proposed row through a fixed alias; MySQL infers the key from whichever unique
 // index the insert violated and needs the proposed row aliased by the statement itself (the AS
-// clause, which is why MySQL 8.0.20 is the floor - the older VALUES() spelling is deprecated).
+// clause, which is why MySQL 8.0.20 is the floor - the older VALUES() spelling is deprecated, and
+// is the only one MariaDB has; see upsertValuesFunc).
 // Inferring the key is a real difference and not merely a syntactic one, but every upsert here has
 // exactly one unique key, so the two agree.
 func (d *DB) upsert(spec upsertSpec) string {
@@ -717,9 +780,22 @@ func (d *DB) upsert(spec upsertSpec) string {
 		ON CONFLICT (` + strings.Join(spec.key, ", ") + `) DO NOTHING`
 	}
 
+	valuesFunc := d.dialect().upsertExcluded == "" && d.dialect().upsertValuesFunc
+
 	assignments := make([]string, len(spec.update))
 	for i, column := range spec.update {
+		if valuesFunc {
+			assignments[i] = column + " = VALUES(" + column + ")"
+
+			continue
+		}
+
 		assignments[i] = column + " = " + alias + "." + column
+	}
+
+	if valuesFunc {
+		return insert + `
+		ON DUPLICATE KEY UPDATE ` + strings.Join(assignments, ", ")
 	}
 
 	if d.dialect().upsertExcluded == "" {

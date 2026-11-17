@@ -559,6 +559,15 @@ func (s *Server) storeNodeSpec(d Deployment) topologyNodeSpec {
 
 	}
 
+	// The engine overrides the driver's name where the store can say which it found, because the two
+	// differ: the mysql driver serves MariaDB too, and its card would read "MySQL" above a version
+	// of "MariaDB 11.4.13".
+	if namer, ok := s.db.(storeEngineNamer); ok {
+		if engine := namer.EngineName(); engine != "" {
+			spec.name = engine
+		}
+	}
+
 	spec.attributes = []topologyAttribute{
 		{key: "driver", value: driver},
 		{key: "compression", value: enabledDescription(d.Compression)},

@@ -71,6 +71,9 @@ by a `repository_dispatch`, so each states for itself which service version it w
   up instead of dropping, and on PostgreSQL or MySQL every instance streams every instance's
   changes. `hippo watch --resume --after-seq N` and the Python client's `watch(resume=...)` use it.
   See [the change log](docs/configuration.md#the-change-log).
+- **MariaDB 10.11 or later is a supported store.** The `mysql` driver detects it at startup and
+  uses its dialect, with nothing to configure. Tested on 10.11, 11.4 and 11.8. See
+  [server drivers](docs/configuration.md#server-drivers).
 
 ## [0.54.1] - 2026-11-17
 

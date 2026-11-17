@@ -54,6 +54,61 @@ func TestUpsertRendersBothForms(t *testing.T) {
 	if strings.Contains(duplicate, "ON CONFLICT") {
 		t.Errorf("duplicate-key upsert must not name the conflict target: %q", duplicate)
 	}
+
+	// MariaDB has the duplicate-key form but not the row alias, which is a syntax error there.
+	values := (&DB{driver: driverMySQL, mariaDB: true}).upsert(spec)
+
+	for _, want := range []string{
+		`INSERT INTO memory_links (from_id, to_id, significance, created)`,
+		`ON DUPLICATE KEY UPDATE significance = VALUES(significance)`,
+	} {
+		if !strings.Contains(values, want) {
+			t.Errorf("VALUES() upsert %q does not contain %q", values, want)
+		}
+	}
+
+	if strings.Contains(values, " AS new") || strings.Contains(values, "created = ") {
+		t.Errorf("VALUES() upsert must declare no row alias and refresh only the update list: %q", values)
+	}
+
+	// Keeping the stored row needs no reference to the proposed one, so it is the same on both.
+	keep := upsertSpec{table: spec.table, columns: spec.columns, key: spec.key}
+	if got, want := (&DB{driver: driverMySQL, mariaDB: true}).upsert(keep), duplicate[:0]+(&DB{driver: driverMySQL}).upsert(keep); got != want {
+		t.Errorf("a keep-the-row upsert differs between MariaDB and MySQL:\n%s\n%s", got, want)
+	}
+}
+
+// TestMariaDBDialectDiffersOnlyWhereItMust holds the derived row to its stated difference from
+// MySQL's. A field changed here without a reason in deriveMariaDB is a dialect drifting silently.
+func TestMariaDBDialectDiffersOnlyWhereItMust(t *testing.T) {
+	mysql := *dialects[driverMySQL]
+	mariaDB := *mariaDBDialect
+
+	if mariaDB.name != "mariadb" || mariaDB.engineName != "MariaDB" || !mariaDB.upsertValuesFunc || mariaDB.catalogueSession != "" ||
+		mariaDB.catalogueSessionReset != "" || !strings.Contains(mariaDB.versionQuery, "MariaDB") {
+		t.Fatalf("the MariaDB row is missing one of its overrides: %+v", mariaDB)
+	}
+
+	mysql.name = mariaDB.name
+	mysql.engineName = mariaDB.engineName
+	mysql.upsertValuesFunc = mariaDB.upsertValuesFunc
+	mysql.catalogueSession = mariaDB.catalogueSession
+	mysql.catalogueSessionReset = mariaDB.catalogueSessionReset
+	mysql.versionQuery = mariaDB.versionQuery
+
+	// Measured rather than inherited; TestRowOverheadMatchesRealStorage holds them to real disk.
+	mysql.memoryRowOverheadBytes = mariaDB.memoryRowOverheadBytes
+	mysql.rowOverheadBytes = mariaDB.rowOverheadBytes
+	mysql.contentIndexRowOverheadBytes = mariaDB.contentIndexRowOverheadBytes
+	mysql.contentIndexPayloadPerMille = mariaDB.contentIndexPayloadPerMille
+
+	if mysql != mariaDB {
+		t.Errorf("the MariaDB row differs from MySQL's beyond its overrides:\n mysql   %+v\n mariadb %+v", mysql, mariaDB)
+	}
+
+	if dialects[driverMySQL].upsertValuesFunc {
+		t.Error("deriving the MariaDB row must not change MySQL's")
+	}
 }
 
 // TestUpsertHonoursASuppliedValuesClause covers the bulk-import path, which builds its own tuple

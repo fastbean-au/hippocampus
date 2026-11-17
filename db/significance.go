@@ -69,7 +69,8 @@ const (
 	// since each write already commits its own transaction.
 	//
 	// MySQL 8.0 is the first version to honour a descending index rather than silently ignoring the
-	// keyword, which the driver already requires (8.0.20+, for the AS-new upsert alias).
+	// keyword, which the driver already requires (8.0.20+, for the AS-new upsert alias). MariaDB
+	// honours it from 10.8, inside its 10.11 floor.
 	listingIndexName    = "idx_memories_listing_v1"
 	listingIndexColumns = "(timestamp DESC, id ASC)"
 

@@ -57,7 +57,8 @@ HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN='root:pass@tcp(localhost:3306)/test' \
 HIPPOCAMPUS_TEST_DIALECT=mysql go test ./db ./hippocampus
 ```
 
-MySQL must be 8.0.20 or later.
+MySQL must be 8.0.20 or later. MariaDB (10.11 or later) runs through the same variables and the
+same `HIPPOCAMPUS_TEST_DIALECT=mysql`: point the DSNs at a MariaDB server and the driver detects it.
 
 ## Design record
 

@@ -228,6 +228,21 @@ func restoreServerFixture(t *testing.T, driver driver, tag string) *DB {
 
 	defer func() { _ = admin.Close() }()
 
+	// The mysql fixtures are mysqldump output from MySQL 8, naming its utf8mb4_0900_ai_ci collation,
+	// which MariaDB before 11.4.5 does not know. Nor are they its history to replay: no released
+	// schema was ever written by a MariaDB server, because none was supported before this one.
+	if driver == driverMySQL {
+		var version string
+
+		if err := admin.QueryRow(`SELECT VERSION()`).Scan(&version); err != nil {
+			t.Fatalf("failed to read the %s server version: %s", label, err)
+		}
+
+		if strings.Contains(version, "MariaDB") {
+			t.Skipf("the %s fixtures are MySQL schemas and %s is MariaDB, which no released schema was written on", tag, version)
+		}
+	}
+
 	// DROP first: a previous run killed mid-test leaves its scratch database behind, and a stale
 	// one would be silently reused and would still hold the PREVIOUS fixture's rows.
 	if _, err := admin.Exec("DROP DATABASE IF EXISTS " + scratch); err != nil {

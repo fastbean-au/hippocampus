@@ -784,14 +784,16 @@ func TestMetadataCountsTowardEvictionBytes(t *testing.T) {
 	// rather than as the bytes the client sent, so the accounting expression has to render it back to
 	// text - and both render their canonical form with the tokens separated ({"a": "b", "c": "d"})
 	// where Go's json.Marshal does not ({"a":"b","c":"d"}). That is one space after each of the n
-	// colons and after each of the n-1 commas. SQLite stores the text verbatim and needs no allowance.
+	// colons and after each of the n-1 commas. SQLite stores the text verbatim and needs no allowance,
+	// and so does MariaDB, whose JSON is a LONGTEXT holding the client's bytes behind a JSON_VALID
+	// check.
 	//
 	// The divergence is a measurement convention, not an accounting fault: what the store requires is
 	// that UsedBytes and EvictMemories' freed estimate be exact complements of one another, and they
 	// are, because both go through metadataBytesExpr. Pinning the figure per dialect rather than
 	// loosening the comparison is deliberate - it keeps this a test that would fail if the two sites
 	// ever stopped measuring the same thing.
-	if testDialect(t) != driverSQLite {
+	if name := newTestDB(t).dialect().name; name != "sqlite" && name != "mariadb" {
 		expected += int64(2*len(metadata) - 1)
 	}
 
