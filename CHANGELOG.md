@@ -75,6 +75,13 @@ by a `repository_dispatch`, so each states for itself which service version it w
   uses its dialect, with nothing to configure. Tested on 10.11, 11.4 and 11.8. See
   [server drivers](docs/configuration.md#server-drivers).
 
+### Security
+
+- **OpenSearch 3.10.0 everywhere.** The compose stacks, the wizard's generated compose file, the
+  demo and CI's search suite move to `opensearchproject/opensearch:3.10.0` (from 3.9.0, 3.1.0 and a
+  floating `:2`) for a vulnerability in the Java runtime the older images bundle. Pull the new
+  image and recreate the container. See [search](docs/design/search.md).
+
 ## [0.54.1] - 2026-11-17
 
 ### Added

@@ -162,6 +162,55 @@ func TestRevocationList_ReloadIfChangedMissingFile(t *testing.T) {
 	}
 }
 
+// TestRevocationList_ReloadIfChangedSkipsUnchangedMtime verifies that reloadIfChanged keys on the
+// mtime alone: a rewrite that leaves the mtime where it was is not read, and advancing the mtime is
+// what makes the new contents load. It calls reloadIfChanged directly rather than waiting on the
+// poller, whose ticks only sometimes land on an unchanged file.
+func TestRevocationList_ReloadIfChangedSkipsUnchangedMtime(t *testing.T) {
+	path := writeRevocationFile(t, `{"jtis":["old"]}`)
+
+	list, err := NewRevocationList(path, time.Hour)
+	if err != nil {
+		t.Fatalf("NewRevocationList: %s", err)
+	}
+	defer list.Stop()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat revocation file: %s", err)
+	}
+
+	if err := os.WriteFile(path, []byte(`{"jtis":["new"]}`), 0o600); err != nil {
+		t.Fatalf("rewrite revocation file: %s", err)
+	}
+
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatalf("restore mtime: %s", err)
+	}
+
+	if err := list.reloadIfChanged(); err != nil {
+		t.Fatalf("reloadIfChanged with an unchanged mtime: %s", err)
+	}
+
+	if !list.IsRevoked(claimsWith("old", "c", time.Now())) || list.IsRevoked(claimsWith("new", "c", time.Now())) {
+		t.Error("expected an unchanged mtime to skip the reload and keep the loaded list")
+	}
+
+	future := info.ModTime().Add(time.Minute)
+
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatalf("advance mtime: %s", err)
+	}
+
+	if err := list.reloadIfChanged(); err != nil {
+		t.Fatalf("reloadIfChanged with an advanced mtime: %s", err)
+	}
+
+	if list.IsRevoked(claimsWith("old", "c", time.Now())) || !list.IsRevoked(claimsWith("new", "c", time.Now())) {
+		t.Error("expected an advanced mtime to load the rewritten list")
+	}
+}
+
 // TestNewRevocationList_PathIsDirectory verifies reload's os.ReadFile failure branch: a path that
 // stats successfully (it exists) but cannot be read as a file - a directory, here - fails
 // construction with a read error rather than a stat error.

@@ -38,7 +38,7 @@ constantly writing, the console shows live data — and the sleep cycle forgetti
 
 By default `run.sh` provisions OpenSearch for the Search tab: if something is already serving on
 `http://localhost:9200` (e.g. a standing test cluster) it reuses that; otherwise it starts an
-`opensearchproject/opensearch:3.1.0` container (needs `docker` or `podman`) and stops it again on
+`opensearchproject/opensearch:3.10.0` container (needs `docker` or `podman`) and stops it again on
 exit. Either way the service's secondary content-search index is enabled against it. Set
 `SEARCH=0 ./demo/run.sh` to skip search entirely; if no cluster is reachable and no container
 runtime is found the demo still runs — the Memories and Events tabs work fully, only the Search tab

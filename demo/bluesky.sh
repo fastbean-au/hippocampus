@@ -162,7 +162,7 @@ if search_on; then
             -e "discovery.type=single-node" \
             -e "DISABLE_SECURITY_PLUGIN=true" \
             -e "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m" \
-            opensearchproject/opensearch:3.1.0 > /dev/null
+            opensearchproject/opensearch:3.10.0 > /dev/null
         OS_STARTED=1
 
         echo "waiting for opensearch to report healthy on port 9200"

@@ -3717,7 +3717,7 @@ function composeFile() {
       "  # Single-node OpenSearch with the security plugin disabled — demo only. Secure it (HTTPS +",
       "  # credentials) before it holds anything real; see deploy/compose/docker-compose.opensearch-secured.yaml.",
       "  opensearch:",
-      "    image: opensearchproject/opensearch:2",
+      "    image: opensearchproject/opensearch:3.10.0",
       "    restart: unless-stopped",
       "    environment:",
       "      discovery.type: single-node",
