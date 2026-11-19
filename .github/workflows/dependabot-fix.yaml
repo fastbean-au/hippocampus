@@ -1,0 +1,242 @@
+name: Dependabot fix
+
+# When CI fails on a Dependabot pull request, have Claude work out why and propose a fix - and push
+# that fix only after a human has read it and approved.
+#
+# WHY. Detection is solved: Dependabot opens the pull requests and CI says which ones break. What
+# was left was the part in between - reading the log, working out whether it is a real break, a
+# module left behind by a per-directory security update (see dependabot.yml), or an advisory main
+# already carries - and that was all done by hand.
+#
+# THE HUMAN IN THE LOOP is the `dependabot-fix` environment, which has a required reviewer. The
+# `propose` job edits a checkout and nothing more; the diff is posted to the pull request as a
+# comment, and the `apply` job - the only job that can write - waits on that environment's approval
+# before it commits and pushes. Rejecting the deployment, or letting it time out, leaves the pull
+# request exactly as Dependabot made it.
+#
+# WHY workflow_run AND NOT pull_request. A pull_request run Dependabot triggers gets no repository
+# secrets, so Claude could not authenticate. workflow_run runs in this repository's context, with
+# them - which is also why every job here is narrowed to Dependabot's own branches in this
+# repository, and why the job that runs the pull request's code holds no write permission at all.
+# The residual exposure is the API key in the `propose` job's environment while a just-bumped
+# dependency's code is built and tested; that is the price of letting Claude run the tests.
+#
+# Pushing to a Dependabot branch stops Dependabot rebasing that pull request on its own. That is the
+# point at which it becomes ours, and `@dependabot recreate` hands it back.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-fix-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  propose:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      actions: read # the failed run's logs
+
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # The tail of each failed job's log is what Claude starts from. Fetched by the workflow rather
+      # than by Claude, so Claude needs no GitHub access of its own.
+      - name: Collect the failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -uo pipefail
+
+          gh run view "${RUN_ID}" -R "${GITHUB_REPOSITORY}" --log-failed | tail -n 600 > "${RUNNER_TEMP}/failure.log"
+          wc -l "${RUNNER_TEMP}/failure.log"
+
+      - name: Diagnose and fix
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          claude_args: >-
+            --max-turns 60
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(go build:*),Bash(go vet:*),Bash(go test:*),Bash(go mod tidy:*),Bash(go mod download:*),Bash(gofmt:*),Bash(git diff:*),Bash(git status:*),Bash(cd:*),Bash(cat:*),Bash(tail:*),Bash(grep:*)"
+          prompt: |
+            CI failed on the Dependabot pull request on branch
+            `${{ github.event.workflow_run.head_branch }}`. The failed jobs' logs are in
+            `${{ runner.temp }}/failure.log`. Read CLAUDE.md and .github/dependabot.yml first.
+
+            Work out why it failed, then make the smallest change that fixes it in this working
+            tree. Common causes here: an integration module's go.mod left behind by a per-directory
+            security update (run `go mod tidy` in every module under integrations/ that has one), an
+            API change in the bumped dependency, or a lint or test failure it exposed. Verify with
+            `go build ./...` and `go test` on the packages involved, in each module you touch.
+
+            Do NOT commit, push, or touch anything under .github/. If the right answer is not a code
+            change - merge it together with a sibling Dependabot pull request, the failure is flaky
+            or unrelated to the bump, or the bump should be closed - change nothing.
+
+            Either way, write your diagnosis to `.dependabot-fix-notes.md` at the repository root:
+            what failed, why, and what you changed or recommend. Keep it under 25 lines; a human
+            reads it to decide whether to approve the push.
+
+      # The diff is taken by the workflow, not reported by Claude, so what is approved is exactly
+      # what will be pushed.
+      - name: Take the diff
+        id: diff
+        run: |
+          set -euo pipefail
+
+          notes=.dependabot-fix-notes.md
+          [ -f "${notes}" ] || echo "Claude left no diagnosis - read the run log." > "${notes}"
+          mv "${notes}" "${RUNNER_TEMP}/notes.md"
+
+          git add -A
+          git diff --cached --binary > "${RUNNER_TEMP}/fix.patch"
+
+          if git diff --cached --name-only | grep -q '^\.github/'; then
+            echo "::error::the proposed fix touches .github/ - refusing to offer it"
+            : > "${RUNNER_TEMP}/fix.patch"
+          fi
+
+          if [ -s "${RUNNER_TEMP}/fix.patch" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dependabot-fix
+          path: |
+            ${{ runner.temp }}/fix.patch
+            ${{ runner.temp }}/notes.md
+
+  # Separate from `propose` so the job holding a write-capable token never runs the pull request's
+  # code, and the job running that code holds nothing that can write.
+  report:
+    needs: propose
+    runs-on: ubuntu-latest
+
+    permissions:
+      pull-requests: write
+
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: dependabot-fix
+          path: fix
+
+      # One comment per pull request, replaced on each failing run, so a pull request that fails
+      # three times carries one current proposal rather than three.
+      - name: Post the proposal
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          CHANGED: ${{ needs.propose.outputs.changed }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          marker='<!-- dependabot-fix -->'
+
+          {
+            echo "${marker}"
+            echo "### CI failed - Claude's diagnosis"
+            echo
+            cat fix/notes.md
+            echo
+
+            if [ "${CHANGED}" = "true" ]; then
+              echo "<details><summary>Proposed change</summary>"
+              echo
+              echo '```diff'
+              head -c 50000 fix/fix.patch
+              echo '```'
+              echo "</details>"
+              echo
+              echo "To push it, approve the **dependabot-fix** deployment on [this run](${RUN_URL}). Reject it to leave the pull request as it is."
+            else
+              echo "No change proposed."
+            fi
+          } > body.md
+
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n 1)"
+
+          if [ -n "${existing}" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" --method PATCH -F body=@body.md
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --method POST -F body=@body.md
+          fi
+
+  apply:
+    needs: [propose, report]
+    if: needs.propose.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+
+    # The gate: this job does not start until a required reviewer approves it.
+    environment: dependabot-fix
+
+    permissions:
+      contents: write
+
+    steps:
+      # A PAT rather than GITHUB_TOKEN, because a push made with GITHUB_TOKEN fires no pull_request
+      # event and CI would never re-run on the fix. Falls back to GITHUB_TOKEN when it is absent,
+      # which pushes the fix but leaves CI to be re-run by hand.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          token: ${{ secrets.DEPENDABOT_FIX_TOKEN || github.token }}
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: dependabot-fix
+          path: ${{ runner.temp }}/fix
+
+      # What was approved is a diff against one commit. If Dependabot rebased the branch while the
+      # approval waited, the diff describes a tree that no longer exists, so it is not applied.
+      - name: Commit and push the approved fix
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+
+          if [ "$(git rev-parse HEAD)" != "${HEAD_SHA}" ]; then
+            echo "::error::${BRANCH} has moved since the fix was proposed - not applying it; the next CI failure proposes again"
+            exit 1
+          fi
+
+          git apply --index "${RUNNER_TEMP}/fix/fix.patch"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit \
+            -m "Fix CI after the dependency bump" \
+            -m "Proposed by Claude from the failed CI run and approved through the dependabot-fix environment." \
+            -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+
+          git push origin "HEAD:${BRANCH}"

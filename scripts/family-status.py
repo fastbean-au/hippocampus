@@ -20,8 +20,8 @@
 # reported.
 #
 # It is READ-ONLY. Nothing here tags, merges, dispatches or writes: it answers a question, and the
-# two automations it exists to watch over (each satellite's release-on-bump job, and the hub's
-# weekly family-status workflow) are what act on the answer.
+# automations it exists to watch over (each satellite's release-on-bump job, and the hub's weekly
+# family-status and daily rebuild-bump-prs workflows) are what act on the answer.
 #
 # GITHUB_TOKEN is OPTIONAL, unlike the sibling family scripts - every repository here is public, so
 # an anonymous run works and simply shares the lower rate limit. Pass one to avoid that:
@@ -32,6 +32,7 @@
 #   scripts/family-status.py --verbose          # list the unreleased commits
 #   scripts/family-status.py hippocampus-obsidian
 #   scripts/family-status.py --dispatch-targets v1.2.3   # which satellites a release should tell
+#   scripts/family-status.py --rebuild-targets           # which bump pull requests have conflicted
 #
 import argparse
 import base64
@@ -155,6 +156,10 @@ BUNDLED_MANIFEST = "package.json"
 GOMOD_PIN = re.compile(r"^\s*github\.com/fastbean-au/hippocampus (v\S+)$", re.MULTILINE)
 FORMULA_PIN = re.compile(r"/releases/download/(v[^/]+)/")
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)")
+
+# The branch each satellite's bump workflow opens its pull request from: `contract/vX.Y.Z` for the
+# three that pin the contract, `service/vX.Y.Z` for the two that pin a client release.
+BUMP_BRANCH = re.compile(r"^(?:contract|service)/(v\d+\.\d+\.\d+)$")
 
 
 def api(path, token, allow_missing=False):
@@ -299,6 +304,76 @@ def dispatch_targets(tag, token):
             print(f"{name}: pinned {dash(pin)}, and what it consumes changed by {tag}", file=sys.stderr)
         else:
             print(f"{name}: pinned {dash(pin)}, and nothing it consumes changed by {tag}", file=sys.stderr)
+
+    return 0
+
+
+def rebuild_targets(token):
+    """The conflicting bump pull requests worth rebuilding, one `repo tag` per line.
+
+    WHY. Two service releases close together leave every satellite's second bump pull request
+    conflicting: it was cut before the first merged, and both rewrite the same pin line. The fix is
+    to re-run the bump with the same tag, which rebuilds the branch from `main` and updates the pull
+    request in place - mechanical, but it waited on a human noticing (2026-11-12 cost a round of
+    failed merges).
+
+    WHICH ONE. Only the NEWEST open bump in a repository, and only while it is ahead of the pin on
+    `main`. Rebuilding an older one would not resolve anything - its tag is superseded - and once a
+    newer bump has merged it would open a pull request that LOWERS the pin, because the bump writes
+    its tag unconditionally. Superseded pull requests are named on stderr for a human to close.
+
+    A pull request whose mergeability GitHub has not computed yet is left for the next run rather
+    than guessed at: a rebuild costs a CI run, and a needless one teaches nothing.
+    """
+    for name, pin_path, pin_kind, _line, dispatched in REPOS:
+        if not dispatched:
+            continue
+
+        pin = extract_pin(pin_kind, file_at(name, pin_path, "main", token))
+        bumps = []
+
+        for pull in api(f"repos/{OWNER}/{name}/pulls?state=open&per_page=100", token) or []:
+            head = pull.get("head") or {}
+
+            # A fork's branch of the same name is not the bump workflow's, and is not ours to rebuild.
+            if (head.get("repo") or {}).get("full_name") != f"{OWNER}/{name}":
+                continue
+
+            found = BUMP_BRANCH.match(head.get("ref", ""))
+
+            if found and version(found.group(1)):
+                bumps.append((version(found.group(1)), found.group(1), pull["number"]))
+
+        if not bumps:
+            continue
+
+        bumps.sort()
+        _, tag, number = bumps[-1]
+
+        for _, older, older_number in bumps[:-1]:
+            print(f"{name}#{older_number}: bumps to {older}, superseded by {tag} - close it", file=sys.stderr)
+
+        if version(pin) and version(pin) >= version(tag):
+            print(f"{name}#{number}: bumps to {tag}, but main already pins {pin} - close it", file=sys.stderr)
+
+            continue
+
+        # The list endpoint never carries mergeability; only the single pull request does.
+        detail = api(f"repos/{OWNER}/{name}/pulls/{number}", token) or {}
+        mergeable = detail.get("mergeable")
+
+        if mergeable is None:
+            print(f"{name}#{number}: mergeability not computed yet - next run", file=sys.stderr)
+
+            continue
+
+        if mergeable:
+            print(f"{name}#{number}: {tag} merges cleanly", file=sys.stderr)
+
+            continue
+
+        print(f"{name} {tag}")
+        print(f"{name}#{number}: {tag} conflicts with main - rebuild it", file=sys.stderr)
 
     return 0
 
@@ -496,6 +571,12 @@ def main():
         help="print the dispatched satellites for which a release of TAG changes something they "
         "consume, one per line, and exit (the notify-satellites job's filter)",
     )
+    parser.add_argument(
+        "--rebuild-targets",
+        action="store_true",
+        help="print `repo tag` for each satellite whose newest bump pull request conflicts with "
+        "main, one per line, and exit (the rebuild-bump-prs job's input)",
+    )
     parser.add_argument("repos", nargs="*", help="limit the report to these repositories")
     args = parser.parse_args()
 
@@ -503,6 +584,9 @@ def main():
 
     if args.dispatch_targets:
         return dispatch_targets(args.dispatch_targets, token)
+
+    if args.rebuild_targets:
+        return rebuild_targets(token)
 
     selected = REPOS
 

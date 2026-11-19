@@ -1,0 +1,94 @@
+name: Rebuild bump PRs
+
+# Re-run a satellite's bump when its newest bump pull request conflicts with main.
+#
+# WHY. Two service releases close together leave every satellite's second bump pull request
+# conflicting - it was cut before the first merged, and both rewrite the same pin line. The fix has
+# always been the same: dispatch the bump again with the same tag, and create-pull-request rebuilds
+# the branch from main and updates the pull request in place. Mechanical, but it waited on somebody
+# noticing, and on 2026-11-12 it cost a round of failed merges first.
+#
+# WHAT IT DOES NOT DO. It merges nothing and closes nothing. Which pull request to rebuild - only the
+# newest per repository, only while it is ahead of main's pin - is decided by
+# `scripts/family-status.py --rebuild-targets`, and the superseded ones it names are left for a
+# human to close, because closing is a judgement about the satellite this job cannot make.
+#
+# The dispatch is the same `hippocampus-release` event notify-satellites sends, so a rebuild runs
+# exactly the code path a release does, with the same tag validation on the receiving side.
+on:
+  schedule:
+    # Daily, 20:00 UTC - 06:00 in Brisbane, an hour ahead of the daily maintenance report, so the
+    # report sees the rebuilt pull requests rather than the conflicts.
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read # the selection script; dispatching elsewhere uses the PAT
+
+concurrency:
+  group: rebuild-bump-prs
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts
+
+      - name: Rebuild each conflicting bump
+        env:
+          GH_TOKEN: ${{ secrets.SATELLITE_DISPATCH_TOKEN }}
+          # The selection only reads public repositories; this token just raises its rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::notice::SATELLITE_DISPATCH_TOKEN is not set - skipping"
+            exit 0
+          fi
+
+          if ! targets="$(python3 scripts/family-status.py --rebuild-targets 2> notes.txt)"; then
+            cat notes.txt
+            echo "::error::could not work out which bump pull requests conflict"
+            exit 1
+          fi
+
+          cat notes.txt
+
+          {
+            echo '```'
+            cat notes.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if grep -q 'close it$' notes.txt; then
+            echo "::warning::some bump pull requests are superseded - see the summary and close them"
+          fi
+
+          failed=()
+
+          while read -r repo tag; do
+            [ -n "${repo}" ] || continue
+
+            if gh api "repos/fastbean-au/${repo}/dispatches" \
+                 --method POST \
+                 --field event_type=hippocampus-release \
+                 --field "client_payload[tag]=${tag}"; then
+              echo "rebuilt ${repo} ${tag}"
+            else
+              echo "::error::could not dispatch ${tag} to ${repo} - re-run its bump from its own Actions tab"
+              failed+=("${repo}")
+            fi
+          done <<< "${targets}"
+
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::not rebuilt: ${failed[*]}"
+
+            exit 1
+          fi
+
+          exit 0

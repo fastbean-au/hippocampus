@@ -239,8 +239,24 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
     releases behind on v0.36.1). It is dispatched to and has **no release line**: its five generator
     images publish from `main` on push, so merging its bump is the release, and that bump is also
     the only build the new pin gets, there being no CI workflow there.
+    (5) `--rebuild-targets` names, per satellite, the **newest** open bump pull request when it
+    conflicts with `main` - two releases close together leave every second bump conflicting, cut
+    before the first merged. The daily `rebuild-bump-prs` workflow re-sends that tag as the same
+    `hippocampus-release` dispatch, which rebuilds the branch in place. Only the newest, and only
+    while it is ahead of `main`'s pin: the bump writes its tag unconditionally, so rebuilding a
+    superseded one would open a pull request that lowers the pin. Superseded ones are named for a
+    human to close; nothing here closes or merges.
     The two shell scripts need `GITHUB_TOKEN` with `administration: write` (and `discussions: write`
     for the second)
+- Dependabot fixes: when CI fails on a Dependabot pull request, `dependabot-fix.yaml` has Claude
+  diagnose it from the failed jobs' logs and edit a checkout, then posts the diagnosis and the diff
+  to the pull request. **Nothing is pushed until a human approves** the `dependabot-fix`
+  environment's deployment on that run; the `apply` job then applies exactly the posted diff, and
+  refuses if the branch moved while the approval waited. The jobs are split by trust: `propose`
+  runs the pull request's code and can write nothing, `report` can comment and runs no code from
+  the pull request, and `apply` can push only after approval. A proposal touching `.github/` is
+  refused outright. Secrets: `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`), and
+  `DEPENDABOT_FIX_TOKEN` - a PAT with contents: write, because a `GITHUB_TOKEN` push re-runs no CI.
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
   list); its **Compatibility** section states what a version number covers — contract, config keys
   **and the values they accept**, stored schema — and what is exempt. `RELEASE.md` carries the
