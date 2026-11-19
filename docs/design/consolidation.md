@@ -307,3 +307,12 @@ from viper once in `New()`. `sleep.go` holds the core consolidation logic:
   caps took it they may have taken what followed. (7) Rejected: a watermark table for "trimmed
   through" (existence of the cursor row says the same with no extra state); `optional after_seq`
   (the contract uses no proto3 `optional`, and `resume` makes "replay from the start" expressible).
+
+**No "never forget".** A pinned flag exempting a memory from
+consolidation and eviction was considered and rejected: the store exists to forget, and a memory
+that cannot be forgotten invalidates that premise rather than extending it. It would also need its
+own ceiling, since pinned bytes still count toward `UsedBytes` and could make a capacity target
+unreachable. Durability stays a product of the maths: a very high significance against a low
+`consolidation.aggressiveness`, still a candidate under a capacity target and still ended by a later
+change to the aggressiveness. Data that must never be lost belongs in a system of record beside the
+service.

@@ -516,7 +516,9 @@ hippocampus -c config.json --port 40000          # gRPC on a custom port; gatewa
 Both listeners bind all interfaces by default. `bindAddress` (gRPC) and `gateway.bindAddress`
 (HTTP) restrict the interface each binds to — set them to `127.0.0.1` to accept only loopback
 traffic, e.g. behind a sidecar/mesh that terminates TLS and forwards over the loopback. Empty (the
-default) preserves the all-interfaces behaviour.
+default) preserves the all-interfaces behaviour, which a container needs; the native
+[launchd](../deploy/launchd/) and [systemd](../deploy/systemd/) configs ship with both set to
+`127.0.0.1`.
 
 To run several independent instances on one host, give each its own `port`, `gateway.port`, and
 `storage.directory`/DSN — the defaults collide and the second to start fails to bind. See

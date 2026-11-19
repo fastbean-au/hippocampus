@@ -63,6 +63,13 @@ by a `repository_dispatch`, so each states for itself which service version it w
 
 ## [Unreleased]
 
+### Security
+
+- **The native configs bind loopback.** `deploy/launchd/config.json` and `deploy/systemd/config.json`
+  (which the .deb/.rpm packages install) run with auth off and now set `bindAddress` and
+  `gateway.bindAddress` to `127.0.0.1`, as the compose stacks publish on loopback. An existing
+  install keeps its own config. See [configuration](docs/configuration.md#grpc-server).
+
 ## [0.55.0] - 2026-11-19
 
 ### Added

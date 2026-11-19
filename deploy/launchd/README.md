@@ -44,5 +44,8 @@ gateway then the gRPC server, bounded by `shutdown.timeoutSeconds`).
 - **Other drivers.** The default config uses embedded SQLite. For a shared Postgres/MySQL set
   `storage.driver` + the DSN and `consolidation.enabled` in `config.json` exactly as the compose/k8s
   overlays do — the agent is driver-agnostic.
+- **Loopback only.** The shipped config has auth off and binds both listeners to `127.0.0.1`
+  (`bindAddress`, `gateway.bindAddress`), so nothing else on the network can reach the store. Set
+  `auth.method` before widening them. See [security](../../docs/security.md).
 
 See also [Operations · Running as a service](../../docs/operations.md#running-as-a-service).

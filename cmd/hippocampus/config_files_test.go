@@ -18,6 +18,16 @@ var shippedConfigGlobs = []string{
 	"demo/config*.json",
 	"deploy/compose/config.*.json",
 	"deploy/k8s/overlays/*/config.json",
+	"deploy/launchd/config.json",
+	"deploy/systemd/config.json",
+}
+
+// nativeConfigs are the configurations a native install (the launchd agent, the systemd unit and
+// the .deb/.rpm packages built from it) starts on. Unlike a container's, nothing in front of them
+// decides which interfaces are reachable.
+var nativeConfigs = []string{
+	"deploy/launchd/config.json",
+	"deploy/systemd/config.json",
 }
 
 // TestShippedConfigsAreValid runs the service's own validation over every configuration file in this
@@ -101,6 +111,42 @@ func TestShippedConfigsCoverEveryDriver(t *testing.T) {
 		if !seen[driver] {
 			t.Errorf("no shipped configuration uses storage.driver %q, so TestShippedConfigsAreValid does not exercise its checks", driver)
 		}
+	}
+}
+
+// TestNativeConfigsBindLoopback: a native install with auth off listens on loopback only, as the
+// compose stacks publish on loopback. Its listeners bind the host's own interfaces, so an empty bind
+// address there hands the whole store to anything on the network, unauthenticated, from the first
+// start.
+func TestNativeConfigsBindLoopback(t *testing.T) {
+	defer viper.Reset()
+
+	for _, config := range nativeConfigs {
+		t.Run(config, func(t *testing.T) {
+			viper.Reset()
+			setStartupDefaults()
+
+			body, err := os.ReadFile(filepath.Join(repoRoot, config))
+			if err != nil {
+				t.Fatalf("failed to read %s: %v", config, err)
+			}
+
+			viper.SetConfigType("json")
+
+			if err := viper.ReadConfig(bytes.NewBuffer(body)); err != nil {
+				t.Fatalf("%s is not parseable as JSON: %v", config, err)
+			}
+
+			exposure := unauthenticatedExposure(
+				viper.GetString("auth.method"),
+				viper.GetString("bindAddress"),
+				viper.GetString("gateway.bindAddress"),
+				viper.GetInt("gateway.port"),
+			)
+			if exposure != "" {
+				t.Errorf("%s starts exposed: %s", config, exposure)
+			}
+		})
 	}
 }
 

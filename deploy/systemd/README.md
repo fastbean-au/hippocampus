@@ -50,5 +50,11 @@ sudo systemctl enable --now hippocampus
 The default config uses the embedded SQLite driver. To run against a shared Postgres/MySQL
 (centralised / horizontal-scaling model), set `storage.driver` + the DSN and
 `consolidation.enabled` in `config.json` exactly as the compose/k8s overlays do — the unit is
-driver-agnostic. Front the listeners with a TLS-terminating reverse proxy, or set `tls.enabled` and
-`bindAddress`, for anything beyond localhost.
+driver-agnostic.
+
+## Reaching it from another machine
+
+The shipped config has auth off and binds both listeners to `127.0.0.1` (`bindAddress`,
+`gateway.bindAddress`), so only this host can reach it. To serve beyond localhost, set `auth.method`
+first, then either front the listeners with a TLS-terminating reverse proxy on loopback, or set
+`tls.enabled` and widen the bind addresses. See [security](../../docs/security.md).
