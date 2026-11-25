@@ -2,8 +2,10 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/fastbean-au/hippocampus/types"
 )
@@ -64,13 +66,99 @@ func churnMemories(t *testing.T, d *DB, turnovers int, perRound int) {
 
 // vacuumForTest runs what autovacuum would have run by now, so the catalogue's entry counts describe
 // the rows the store is left holding. A test cannot wait a minute for the daemon.
+//
+// One VACUUM is not enough on a shared server. It cannot remove a row another session's snapshot
+// can still see, and where it removes nothing it leaves each index's entry count as the last
+// vacuum or analyse set it - which, landing mid-churn, is thousands of rows the table no longer
+// holds. So it repeats until no index counts more entries than the table has rows, which is the
+// first VACUUM to run after every older snapshot has gone.
 func vacuumForTest(t *testing.T, d *DB, tables ...string) {
 	t.Helper()
 
+	ctx := context.Background()
+	deadline := time.Now().Add(time.Minute)
+
 	for _, table := range tables {
-		if _, err := d.sql.Exec(`VACUUM ` + table); err != nil {
-			t.Fatalf("VACUUM %s: %s", table, err)
+		for {
+			if _, err := d.sql.Exec(`VACUUM ` + table); err != nil {
+				t.Fatalf("VACUUM %s: %s", table, err)
+			}
+
+			stale, err := staleIndexEntries(ctx, d, table)
+			if err != nil {
+				t.Fatalf("checking the entry counts on %s: %s", table, err)
+			}
+
+			if stale == "" {
+				break
+			}
+
+			if time.Now().After(deadline) {
+				t.Fatalf("VACUUM %s left %s counting rows the table no longer holds", table, stale)
+			}
+
+			time.Sleep(250 * time.Millisecond)
 		}
+	}
+}
+
+// staleIndexEntries names an index on table that counts more entries than the table has rows, or
+// returns "" where none does.
+func staleIndexEntries(ctx context.Context, d *DB, table string) (string, error) {
+	var rows int64
+
+	if err := d.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&rows); err != nil {
+
+		return "", err
+	}
+
+	sizes := d.catalogue()
+	defer sizes.close()
+
+	indexes, err := d.indexFootprints(ctx, sizes, table)
+	if err != nil {
+
+		return "", err
+	}
+
+	for _, index := range indexes {
+		if index.Entries > rows {
+
+			return fmt.Sprintf("%s at %d entries over %d rows", index.Index, index.Entries, rows), nil
+		}
+	}
+
+	return "", nil
+}
+
+// drainSearchDeletes claims and confirms the search outbox's queued deletes, as the index worker
+// would, until at least `most` are gone or the outbox is empty. Zero drains it.
+func drainSearchDeletes(t *testing.T, d *DB, most int) {
+	t.Helper()
+
+	ctx := context.Background()
+	drained := 0
+
+	for most == 0 || drained < most {
+		claimed, err := d.ClaimSearchDeletes(ctx, 1000)
+		if err != nil {
+			t.Fatalf("ClaimSearchDeletes: %s", err)
+		}
+
+		if len(claimed) == 0 {
+			break
+		}
+
+		seqs := make([]int64, 0, len(claimed))
+		for _, entry := range claimed {
+			seqs = append(seqs, entry.Seq)
+		}
+
+		if err := d.ConfirmSearchDeletes(ctx, seqs); err != nil {
+			t.Fatalf("ConfirmSearchDeletes: %s", err)
+		}
+
+		drained += len(claimed)
 	}
 }
 
@@ -238,26 +326,7 @@ func TestRebuildBloatedIndexesReturnsAQueueIndexToItsRows(t *testing.T) {
 	t.Cleanup(func() { d.SetSearchOutbox(false) })
 
 	churnMemories(t, d, 1, 5000)
-
-	for {
-		claimed, err := d.ClaimSearchDeletes(ctx, 1000)
-		if err != nil {
-			t.Fatalf("ClaimSearchDeletes: %s", err)
-		}
-
-		if len(claimed) == 0 {
-			break
-		}
-
-		seqs := make([]int64, 0, len(claimed))
-		for _, entry := range claimed {
-			seqs = append(seqs, entry.Seq)
-		}
-
-		if err := d.ConfirmSearchDeletes(ctx, seqs); err != nil {
-			t.Fatalf("ConfirmSearchDeletes: %s", err)
-		}
-	}
+	drainSearchDeletes(t, d, 0)
 
 	vacuumForTest(t, d, searchOutboxTable)
 
@@ -282,6 +351,77 @@ func TestRebuildBloatedIndexesReturnsAQueueIndexToItsRows(t *testing.T) {
 
 	if !sawOutbox {
 		t.Error("the pass left the drained outbox's indexes at their high-water mark")
+	}
+}
+
+// TestVacuumForTestOutlastsAHeldSnapshot holds the helper the rebuild tests lean on to what its
+// name promises. The queue test above failed in CI because a VACUUM cannot remove a row some other
+// session's snapshot can still see - and on a server the whole suite shares, some session always
+// can - so it left the outbox's index entry count where an analyse landing mid-drain had put it,
+// thousands of rows for an empty queue, and the pass judged the index dense.
+func TestVacuumForTestOutlastsAHeldSnapshot(t *testing.T) {
+	d := newTestDB(t)
+
+	if d.dialect().rebuildIndex == "" {
+		t.Skipf("%s has no online rebuild", d.dialect().name)
+	}
+
+	ctx := context.Background()
+
+	d.SetSearchOutbox(true)
+	t.Cleanup(func() { d.SetSearchOutbox(false) })
+
+	churnMemories(t, d, 1, 5000)
+	drainSearchDeletes(t, d, 2000)
+
+	if _, err := d.sql.Exec(`ANALYZE ` + searchOutboxTable); err != nil {
+		t.Fatalf("ANALYZE %s: %s", searchOutboxTable, err)
+	}
+
+	held, err := d.sql.Conn(ctx)
+	if err != nil {
+		t.Fatalf("Conn: %s", err)
+	}
+
+	tx, err := held.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		t.Fatalf("BeginTx: %s", err)
+	}
+
+	// The first statement of a repeatable-read transaction takes its snapshot.
+	if _, err := tx.ExecContext(ctx, `SELECT 1`); err != nil {
+		t.Fatalf("taking a snapshot: %s", err)
+	}
+
+	drainSearchDeletes(t, d, 0)
+
+	released := make(chan struct{})
+
+	go func() {
+		defer close(released)
+
+		time.Sleep(2 * time.Second)
+
+		_ = tx.Rollback()
+		_ = held.Close()
+	}()
+
+	t.Cleanup(func() { <-released })
+
+	vacuumForTest(t, d, searchOutboxTable)
+
+	sizes := d.catalogue()
+	defer sizes.close()
+
+	indexes, err := d.indexFootprints(ctx, sizes, searchOutboxTable)
+	if err != nil {
+		t.Fatalf("indexFootprints: %s", err)
+	}
+
+	for _, index := range indexes {
+		if index.Entries != 0 {
+			t.Errorf("%s still counts %d entries over an empty outbox", index.Index, index.Entries)
+		}
 	}
 }
 
