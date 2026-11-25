@@ -69,6 +69,12 @@ by a `repository_dispatch`, so each states for itself which service version it w
   (which the .deb/.rpm packages install) run with auth off and now set `bindAddress` and
   `gateway.bindAddress` to `127.0.0.1`, as the compose stacks publish on loopback. An existing
   install keeps its own config. See [configuration](docs/configuration.md#grpc-server).
+- **The Bluesky bridge moves past GO-2026-6278** (a weak PRNG for WebSocket mask keys):
+  `integrations/eventsource` pins `gorilla/websocket` to the untagged fix, since upstream has tagged
+  nothing after v1.5.3. See [the advisory](https://pkg.go.dev/vuln/GO-2026-6278).
+- **The vulnerability scan fails when it could not scan.** `scripts/govulncheck.sh` passed a run
+  whose vulnerability database was unreachable; it now exits 2. See
+  [tooling](docs/design/tooling.md).
 
 ## [0.55.0] - 2026-11-19
 
