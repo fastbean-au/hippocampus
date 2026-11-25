@@ -17,7 +17,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.33.0
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.34.0
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/montanaflynn/stats v0.14.0
 	github.com/opensearch-project/opensearch-go/v4 v4.8.1
@@ -90,7 +90,7 @@ require (
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261104224025-d1e00e9f33ab // indirect
 	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
