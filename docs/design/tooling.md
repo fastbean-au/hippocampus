@@ -255,7 +255,7 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   refuses if the branch moved while the approval waited. The jobs are split by trust: `propose`
   runs the pull request's code and can write nothing, `report` can comment and runs no code from
   the pull request, and `apply` can push only after approval. A proposal touching `.github/` is
-  refused outright. Secrets: `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`), and
+  refused outright. Secrets: `CLAUDE_CODE_OAUTH_TOKEN` (the subscription, not a per-token API key), and
   `DEPENDABOT_FIX_TOKEN` - a PAT with contents: write, because a `GITHUB_TOKEN` push re-runs no CI.
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
   list); its **Compatibility** section states what a version number covers — contract, config keys

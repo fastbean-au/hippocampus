@@ -76,7 +76,8 @@ jobs:
       - name: Diagnose and fix
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The subscription's OAuth token (`claude setup-token`), never an API key: a key bills per
+          # token to a Console account, and this runs on every red Dependabot pull request.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           claude_args: >-

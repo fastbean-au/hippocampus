@@ -59,8 +59,19 @@ failed=0
 for module in "${modules[@]}"; do
 	echo "==> ${module}"
 
-	# govulncheck exits non-zero when it finds something; the findings are judged below instead.
-	report="$(cd "${module}" && govulncheck -format json ./... || true)"
+	# With -format json govulncheck exits 0 WHATEVER it finds - the findings are judged below - so a
+	# non-zero exit means the scan itself failed. Its config record is no proof of a scan: it is
+	# written before the vulnerability database is fetched, and a run with vuln.go.dev unreachable
+	# printed one, scanned nothing, and passed as "no reachable vulnerabilities" until this checked
+	# the status as well.
+	status=0
+	report="$(cd "${module}" && govulncheck -format json ./...)" || status=$?
+
+	if [[ "${status}" -ne 0 ]]; then
+		echo "error: govulncheck failed for ${module} (exit ${status}) - nothing was scanned" >&2
+
+		exit 2
+	fi
 
 	if ! jq -e 'select(.config) | .config' <<<"${report}" >/dev/null; then
 		echo "error: govulncheck produced no report for ${module}" >&2
